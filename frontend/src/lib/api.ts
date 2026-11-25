@@ -144,6 +144,47 @@ export type Resolution = {
   candidates: { symbol: string; name: string; score: number }[];
 };
 
+export type SignalSummary = {
+  signal: string;
+  horizon: string;
+  n: number;
+  pending: number;
+  hit_rate: number | null;
+  mean_excess: number | null;
+  median_excess: number | null;
+};
+
+export type Score = { outcome: string; excess: number | null; stock_return?: number; index_return?: number };
+
+export type JournalEntry = {
+  id: number;
+  day: string;
+  symbol: string;
+  price: number;
+  signal: string;
+  confidence: string;
+  mid: number | null;
+  upside: number | null;
+  scores: Record<string, Score>;
+};
+
+export type Journal = { as_of: string; entries: JournalEntry[]; summary: SignalSummary[]; engine_version: string };
+
+export type Backtest = {
+  run_at: string;
+  engine_version: string;
+  start: string;
+  end: string;
+  universe: string;
+  symbols: number;
+  limitations: string[];
+  summary: {
+    observations: number;
+    by_signal: SignalSummary[];
+    upside_vs_return: Record<string, { n: number; spearman: number | null; top_quintile_excess: number | null; bottom_quintile_excess: number | null }>;
+  };
+};
+
 export class ApiError extends Error {
   constructor(public status: number, message: string) {
     super(message);
@@ -177,6 +218,8 @@ export const api = {
     call<{ points: { date: string; close: number }[] }>(`/api/company/${encodeURIComponent(s)}/prices?period=${period}`),
   sector: (s: string) => call<SectorPicture>(`/api/company/${encodeURIComponent(s)}/sector`),
   sectors: () => call<{ as_of: string; sectors: SectorStat[] }>(`/api/sectors`),
+  journal: () => call<Journal>(`/api/journal`),
+  backtest: () => call<Backtest>(`/api/backtest`),
   research: (s: string) => call<ResearchState>(`/api/company/${encodeURIComponent(s)}/research`),
   // The custom header lets the API refuse cross-site requests (see backend app/api.py).
   startResearch: (s: string, force = false) =>

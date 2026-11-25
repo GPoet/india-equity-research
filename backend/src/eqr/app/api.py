@@ -41,6 +41,8 @@ class Services(Protocol):
     def sectors(self) -> dict[str, Any]: ...
     def run_research(self, symbol: str, model: str) -> dict[str, Any]: ...
     def cached_research(self, symbol: str, model: str) -> dict[str, Any] | None: ...
+    def journal(self) -> dict[str, Any]: ...
+    def backtest(self) -> dict[str, Any] | None: ...
 
 
 class ResearchJobs:
@@ -198,6 +200,19 @@ def create_app(services: Services) -> FastAPI:
     @app.get("/api/sectors")
     def sectors() -> dict[str, Any]:
         return clean(services.sectors())
+
+    @app.get("/api/journal")
+    def journal() -> dict[str, Any]:
+        return clean(services.journal())
+
+    @app.get("/api/backtest")
+    def backtest() -> dict[str, Any]:
+        result = services.backtest()
+        if result is None:
+            raise HTTPException(
+                404, "No backtest has been run yet: uv run python scripts/backtest.py"
+            )
+        return clean(result)
 
     @app.get("/api/company/{symbol}/research")
     def research_status(symbol: str, model: str = "sonnet") -> dict[str, Any]:

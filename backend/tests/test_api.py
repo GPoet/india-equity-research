@@ -55,6 +55,12 @@ class FakeServices:
     def cached_research(self, symbol, model):
         return self.cached
 
+    def journal(self):
+        return {"as_of": "2026-11-25", "entries": [], "summary": [], "engine_version": "x"}
+
+    def backtest(self):
+        return None
+
 
 @pytest.fixture()
 def client():
@@ -160,3 +166,13 @@ def test_memo_caches_failure_briefly() -> None:
         with pytest.raises(RuntimeError):
             memo.get("k", 60, boom)
     assert len(calls) == 1
+
+
+def test_journal_endpoint(client) -> None:
+    assert client.get("/api/journal").json()["entries"] == []
+
+
+def test_backtest_missing_is_404_with_instructions(client) -> None:
+    r = client.get("/api/backtest")
+    assert r.status_code == 404
+    assert "scripts/backtest.py" in r.json()["detail"]

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import asdict, dataclass
-from datetime import date, timedelta
+from datetime import date
 from typing import Any
 
 import pandas as pd
@@ -19,13 +19,11 @@ from eqr.valuation.context import PriceData, ValuationContext, build_context
 from eqr.valuation.lenses_quality import QUALITY_LENSES
 from eqr.valuation.lenses_value import VALUE_LENSES, reverse_dcf, reverse_residual_income
 from eqr.valuation.models import LensResult
+from eqr.valuation.pricedata import MarketSeries, price_data_as_of
 
 log = logging.getLogger(__name__)
 
 INDEX = "^NSEI"  # Nifty 50
-BETA_PERIOD = "2y"
-DEFAULT_BETA = 1.0
-BETA_RANGE = (0.5, 2.0)  # outside this, a 2-year beta is noise (thin trading, one-off moves)
 # Context notes that mean the inputs themselves are shaky; each lowers confidence.
 DATA_WARNING_MARKERS = (
     "mis-tagged",
@@ -35,71 +33,32 @@ DATA_WARNING_MARKERS = (
 )
 
 
-def _blume(beta: float) -> float:
-    """Blume adjustment: betas drift toward 1 over time."""
-    return 0.67 * beta + 0.33
+def _dated(s: pd.Series) -> pd.Series:
+    out = s.dropna().copy()
+    out.index = [ts.date() for ts in out.index]
+    return out
 
 
-def estimate_beta(symbol: str) -> tuple[float, str]:
+def fetch_market_series(symbol: str) -> MarketSeries:
+    """Full daily history for the stock and the Nifty 50, plus dividends (None if Yahoo fails).
+    Bonus/split factors come from the filings (fundamentals.share_action_factors) because
+    Yahoo's split *list* misses Indian bonus issues; its price and dividend *history* is
+    adjusted for them (checked on Bajaj Finance's 2025 bonus + split), so it is used as is."""
+    closes = _dated(history(symbol, period="max")["Close"])
+    index = _dated(yf.Ticker(INDEX).history(period="max", auto_adjust=False)["Close"])
     try:
-        stock = history(symbol, period=BETA_PERIOD, interval="1wk")["Close"].pct_change()
-        index = (
-            yf.Ticker(INDEX)
-            .history(period=BETA_PERIOD, interval="1wk", auto_adjust=False)["Close"]
-            .pct_change()
-        )
-        joined = pd.concat([stock, index], axis=1, join="inner").dropna()
-        if len(joined) < 50:
-            return DEFAULT_BETA, f"default {DEFAULT_BETA} (only {len(joined)} weekly returns)"
-        raw = joined.iloc[:, 0].cov(joined.iloc[:, 1]) / joined.iloc[:, 1].var()
-        adjusted = _blume(raw)
-        bounded = min(max(adjusted, BETA_RANGE[0]), BETA_RANGE[1])
-        note = "" if bounded == adjusted else f", capped from {adjusted:.2f}"
-        return bounded, f"2y weekly vs Nifty 50, raw {raw:.2f}, Blume-adjusted{note}"
-    except Exception as exc:  # network / Yahoo errors: fall back, but say so
-        log.warning("Beta for %s failed: %s", symbol, exc)
-        return DEFAULT_BETA, f"default {DEFAULT_BETA} (beta download failed: {type(exc).__name__})"
-
-
-def _fy_of(day: date) -> date:
-    return date(day.year if day.month <= 3 else day.year + 1, 3, 31)
+        divs: pd.Series | None = yf.Ticker(yahoo_symbol(symbol)).dividends
+        divs = _dated(divs) if divs is not None else None
+    except Exception as exc:  # noqa: BLE001 - dividends are optional; None means unknown
+        log.warning("Dividends for %s failed: %s", symbol, exc)
+        divs = None
+    return MarketSeries(closes, index, divs)
 
 
 def fetch_price_data(symbol: str, fy_ends: list[date], today: date) -> PriceData:
     q = quote(symbol)
-    beta, beta_source = estimate_beta(symbol)
-    hist = history(symbol, period="max")
-    closes = hist["Close"]
-    closes.index = [ts.date() for ts in closes.index]
-    fy_prices: dict[date, float] = {}
-    for fy in fy_ends:
-        before = closes[[d <= fy for d in closes.index]]
-        if not before.empty and (fy - before.index[-1]).days <= 10:
-            fy_prices[fy] = float(before.iloc[-1])
-    # Bonus/split factors come from the filings (fundamentals.share_action_factors) because
-    # Yahoo's split *list* misses Indian bonus issues. Its price and dividend *history* is
-    # adjusted for them (checked on Bajaj Finance's 2025 bonus + split), so it is used as is.
-    ticker = yf.Ticker(yahoo_symbol(symbol))
-    try:
-        divs = ticker.dividends
-        by_fy = {fy: 0.0 for fy in fy_ends}
-        for ts, amount in divs.items():
-            fy = _fy_of(ts.date())
-            if fy in by_fy:
-                by_fy[fy] += float(amount)
-        cutoff = today - timedelta(days=365)
-        dps_ttm: float | None = float(sum(a for ts, a in divs.items() if ts.date() > cutoff))
-    except Exception as exc:
-        log.warning("Dividends for %s failed: %s", symbol, exc)
-        by_fy, dps_ttm = {}, None  # unknown, not zero
-    return PriceData(
-        price=q.price,
-        as_of=q.as_of.isoformat(),
-        beta=beta,
-        beta_source=beta_source,
-        dps_ttm=dps_ttm,
-        dps_by_fy=by_fy,
-        fy_end_prices=fy_prices,
+    return price_data_as_of(
+        fetch_market_series(symbol), fy_ends, today, price=q.price, price_as_of=q.as_of.isoformat()
     )
 
 

@@ -26,6 +26,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <SearchBox compact />
             <nav aria-label="Main">
               <Link href="/sectors">Sectors</Link>
+              <Link href="/track">Track record</Link>
             </nav>
           </header>
           <main>{children}</main>

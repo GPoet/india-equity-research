@@ -10,6 +10,7 @@ from typing import Any
 
 from eqr.cache import Cache
 from eqr.fundamentals import Fundamentals, load_fundamentals
+from eqr.journal import Journal
 from eqr.llm.claude_cli import ClaudeCliProvider, LlmProvider
 from eqr.market import MarketInputs, load_market_inputs
 from eqr.nse_client import NseClient
@@ -38,6 +39,7 @@ class Context:
     _cache: Cache | None = None
     _client: NseClient | None = None
     _resolver: Resolver | None = None
+    _journal: Journal | None = None
 
     @property
     def cache(self) -> Cache:
@@ -64,6 +66,12 @@ class Context:
     @property
     def indices(self) -> IndexHistory:
         return IndexHistory(self.client, self.cache)
+
+    @property
+    def journal(self) -> Journal:
+        if self._journal is None:
+            self._journal = Journal(self.data_dir / "journal.sqlite")
+        return self._journal
 
     @property
     def research_store(self) -> ResearchStore:

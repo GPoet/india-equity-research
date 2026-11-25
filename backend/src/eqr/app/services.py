@@ -3,6 +3,7 @@ in-memory caches so the dashboard stays fast and NSE is not hammered."""
 
 from __future__ import annotations
 
+import json
 import logging
 import threading
 import time
@@ -10,17 +11,23 @@ from collections.abc import Callable
 from datetime import date
 from typing import Any, TypeVar
 
+import yfinance as yf
+
 from eqr.fundamentals import Fundamentals, owners_profit
+from eqr.journal import HORIZONS, score_entry, summarise
 from eqr.pipeline import Context, announcements, research, valuation
 from eqr.sectors.catalog import sector_for_industry
 from eqr.sectors.view import build_stats, sector_picture
 from eqr.sources.prices import history
+from eqr.valuation import ENGINE_VERSION
+from eqr.valuation.engine import _dated
 
 T = TypeVar("T")
 log = logging.getLogger(__name__)
 VALUATION_TTL = 15 * 60
 SECTOR_TTL = 6 * 3600
 INDEX_DAYS = 400
+JOURNAL_PRICE_TTL = 6 * 3600
 
 
 FAILURE_TTL = 45  # a failed lookup is remembered briefly so waiters don't each retry it
@@ -124,6 +131,10 @@ class LiveServices:
         def make() -> dict[str, Any]:
             sec = self.ctx.resolver.by_symbol(symbol)
             f, report = valuation(self.ctx, symbol, date.today())
+            try:
+                self.ctx.journal.record(report, date.today(), ENGINE_VERSION)
+            except Exception as exc:  # noqa: BLE001 - the track record must never break the page
+                log.warning("Journal write for %s failed: %s", symbol, exc)
             industry = self._industry(symbol)
             return {
                 "symbol": symbol,
@@ -166,6 +177,41 @@ class LiveServices:
         industry = self._industry(symbol)
         key = sector_for_industry(industry, sec.name if sec else "")
         return {"industry": industry, "sector_key": key, "picture": sector_picture(key, closes, pe)}
+
+    def _closes(self, symbol: str):
+        return self._memo.get(
+            f"closes:{symbol}",
+            JOURNAL_PRICE_TTL,
+            lambda: _dated(history(symbol, period="max")["Close"]),
+        )
+
+    def journal(self) -> dict[str, Any]:
+        today = date.today()
+        index = self._memo.get(
+            "closes:^NSEI",
+            JOURNAL_PRICE_TTL,
+            lambda: _dated(yf.Ticker("^NSEI").history(period="max", auto_adjust=False)["Close"]),
+        )
+        scored = []
+        for e in self.ctx.journal.entries():
+            try:
+                scores = score_entry(e, self._closes(e["symbol"]), index, today)
+            except Exception as exc:  # noqa: BLE001 - one missing price history must not hide the rest
+                log.warning("Scoring %s failed: %s", e["symbol"], exc)
+                scores = {h: {"outcome": "no data", "excess": None} for h in HORIZONS}
+            scored.append({**e, "scores": scores})
+        return {
+            "as_of": today,
+            "entries": scored,
+            "summary": summarise(scored),
+            "engine_version": ENGINE_VERSION,
+        }
+
+    def backtest(self) -> dict[str, Any] | None:
+        path = self.ctx.data_dir / "backtest" / "latest.json"
+        if not path.exists():
+            return None
+        return json.loads(path.read_text())
 
     def run_research(self, symbol: str, model: str) -> dict[str, Any]:
         sec = self.ctx.resolver.by_symbol(symbol)

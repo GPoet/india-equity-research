@@ -182,6 +182,21 @@ class FilingsSource:
             raise ValueError(f"Unexpected filings payload shape for {symbol}")
         return merge_refs(parse_legacy(legacy), parse_integrated(integrated))
 
+    def list_raw(self, symbol: str) -> list[FilingRef]:
+        """Every filing version, unmerged: the backtest needs to know what was public when."""
+        sym = symbol.replace("&", "%26")
+        integrated = self._client.get_json(
+            f"integrated-filing-results?index=equities&symbol={sym}&type=Integrated%20Filing-%20Financials",
+            ttl=LIST_TTL,
+        )
+        legacy = self._client.get_json(
+            f"corporates-financial-results?index=equities&symbol={sym}&period=Quarterly",
+            ttl=LIST_TTL,
+        )
+        if not isinstance(integrated, dict) or not isinstance(legacy, list):
+            raise ValueError(f"Unexpected filings payload shape for {symbol}")
+        return [*parse_legacy(legacy), *parse_integrated(integrated)]
+
     def fetch(self, ref: FilingRef) -> Filing:
         # Filed documents are immutable (revisions get a new URL), so cache forever;
         # the validator keeps HTML error pages out of the cache.
