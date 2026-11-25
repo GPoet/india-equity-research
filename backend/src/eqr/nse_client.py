@@ -14,7 +14,8 @@ import json
 import re
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from typing import Any
 
 from curl_cffi import requests
@@ -26,6 +27,9 @@ API = f"{BASE}/api/"
 EMPTY_TTL = 600.0  # an empty list may be real (new listing) or a soft block: recheck soon
 MAX_ATTEMPTS = 3
 RETRY_STATUS = {429, 500, 502, 503, 504}
+
+
+_thread = threading.local()
 
 
 class NseError(RuntimeError):
@@ -61,6 +65,20 @@ class NseClient:
         self._session: Any = None
         self._last_call = 0.0
         self._lock = threading.Lock()
+        # Requests from the website go first: background work (the daily scan) waits while
+        # any foreground request is queued, so pages stay quick during a long scan.
+        self._fg_waiting = 0
+        self._fg_cond = threading.Condition()
+
+    @contextmanager
+    def background(self) -> Iterator[None]:
+        """Mark this thread's requests as low priority for the duration."""
+        prev = getattr(_thread, "background", False)
+        _thread.background = True
+        try:
+            yield
+        finally:
+            _thread.background = prev
 
     def _throttle(self) -> None:
         wait = self._min_interval - (time.monotonic() - self._last_call)
@@ -84,6 +102,20 @@ class NseClient:
         self._session = session  # only keep a session that warmed up successfully
 
     def _fetch(self, url: str) -> Any:
+        if getattr(_thread, "background", False):
+            with self._fg_cond:
+                self._fg_cond.wait_for(lambda: self._fg_waiting == 0)
+            return self._fetch_locked(url)
+        with self._fg_cond:
+            self._fg_waiting += 1
+        try:
+            return self._fetch_locked(url)
+        finally:
+            with self._fg_cond:
+                self._fg_waiting -= 1
+                self._fg_cond.notify_all()
+
+    def _fetch_locked(self, url: str) -> Any:
         """GET with re-warm on 401/403 and backoff on 429/5xx/network errors."""
         with self._lock:
             rewarmed = False

@@ -62,6 +62,12 @@ class FakeServices:
     def backtest(self):
         return None
 
+    def scan(self):
+        return {"running": False, "progress": {}, "latest": None}
+
+    def start_scan(self):
+        return {"started": True, "running": True, "progress": {}, "latest": None}
+
     def overview(self):
         return {"as_of": "2026-11-25", "movers": {}}
 
@@ -215,3 +221,9 @@ def test_forecast_endpoint(client) -> None:
 
 def test_overview_endpoint(client) -> None:
     assert client.get("/api/overview").json()["as_of"] == "2026-11-25"
+
+
+def test_scan_endpoints(client) -> None:
+    assert client.get("/api/scan").json()["running"] is False
+    assert client.post("/api/scan").status_code == 403  # same CSRF guard as research
+    assert client.post("/api/scan", headers=H).json()["started"] is True

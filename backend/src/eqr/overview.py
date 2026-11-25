@@ -77,6 +77,8 @@ def unusual_volume(
                 "symbol": sym,
                 "ratio": b.volume / fmean(vols),
                 "change": _change(b, factors, today_day),
+                "volume": b.volume,
+                "avg_volume": fmean(vols),
                 "turnover": b.turnover,
             }
         )
@@ -98,6 +100,7 @@ def most_traded(
         {
             "symbol": b.symbol,
             "turnover": b.turnover,
+            "volume": b.volume,
             "close": b.close,
             "change": _change(b, factors or {}, day or b.trade_date),
         }
@@ -114,7 +117,13 @@ def movers(
         rets = window_returns(files, factors, k)
         turn = avg_turnover(files, k)
         rows = [
-            {"symbol": s, "change": r, "close": files[-1][1][s].close}
+            {
+                "symbol": s,
+                "change": r,
+                "close": files[-1][1][s].close,
+                "volume": files[-1][1][s].volume,
+                "turnover": files[-1][1][s].turnover,
+            }
             for s, r in rets.items()
             if s in universe and turn.get(s, 0) >= MIN_TURNOVER
         ]

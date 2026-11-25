@@ -47,6 +47,8 @@ class Services(Protocol):
     def backtest(self) -> dict[str, Any] | None: ...
     def forecast(self, symbol: str) -> dict[str, Any]: ...
     def overview(self) -> dict[str, Any]: ...
+    def scan(self) -> dict[str, Any]: ...
+    def start_scan(self) -> dict[str, Any]: ...
     def sentiment_enabled(self) -> bool: ...
     def run_sentiment(self, symbol: str, kind: str) -> dict[str, Any]: ...
     def cached_sentiment(self, symbol: str, kind: str) -> dict[str, Any] | None: ...
@@ -148,7 +150,11 @@ def create_app(services: Services) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
+        if start := getattr(services, "start_background", None):
+            start()  # daily scan schedule (live services only)
         yield
+        if stop := getattr(services, "stop_background", None):
+            stop()
         jobs.shutdown()
         sentiment_jobs.shutdown()
 
@@ -218,6 +224,15 @@ def create_app(services: Services) -> FastAPI:
     @app.get("/api/overview")
     def overview() -> dict[str, Any]:
         return clean(services.overview())
+
+    @app.get("/api/scan")
+    def scan_status() -> dict[str, Any]:
+        return clean(services.scan())
+
+    @app.post("/api/scan")
+    def scan_start(request: Request) -> dict[str, Any]:
+        _check_same_site(request)
+        return clean(services.start_scan())
 
     @app.get("/api/sectors")
     def sectors() -> dict[str, Any]:

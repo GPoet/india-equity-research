@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 
 import { PeriodSwitch } from "@/components/PeriodSwitch";
 import { api, ApiError, type Mover, type Overview, type Period } from "@/lib/api";
-import { crore, pct, rupees } from "@/lib/format";
+import { crore, pct, rupees, shares } from "@/lib/format";
 
 function longDate(iso: string): string {
   return new Date(`${iso.slice(0, 10)}T00:00:00`).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
@@ -39,18 +39,41 @@ function Card({ title, note, children, action }: { title: string; note?: string;
   );
 }
 
+export function Volume({ volume, turnover }: { volume: number; turnover: number }) {
+  return (
+    <span className="row-num vol">
+      {shares(volume)}
+      <span className="vol-value">{crore(turnover)}</span>
+    </span>
+  );
+}
+
+function Heads({ cols }: { cols: string[] }) {
+  return (
+    <div className="row-heads" aria-hidden="true">
+      {cols.map((c, i) => (
+        <span key={c} className={i ? "row-num" : ""}>{c}</span>
+      ))}
+    </div>
+  );
+}
+
 function MoverList({ rows, names }: { rows: Mover[]; names: Record<string, string> }) {
   if (rows.length === 0) return <p className="muted small">Nothing to show.</p>;
   return (
-    <ol className="rows">
-      {rows.map((m) => (
-        <li key={m.symbol}>
-          <Stock symbol={m.symbol} names={names} />
-          <span className="row-num">{rupees(m.close)}</span>
-          <span className="row-num"><Change x={m.change} /></span>
-        </li>
-      ))}
-    </ol>
+    <>
+      <Heads cols={["Stock", "Price", "Volume", "Change"]} />
+      <ol className="rows four">
+        {rows.map((m) => (
+          <li key={m.symbol}>
+            <Stock symbol={m.symbol} names={names} />
+            <span className="row-num">{rupees(m.close)}</span>
+            <Volume volume={m.volume} turnover={m.turnover} />
+            <span className="row-num"><Change x={m.change} /></span>
+          </li>
+        ))}
+      </ol>
+    </>
   );
 }
 
@@ -114,22 +137,28 @@ export function MarketOverview() {
         <MoversCard title="Worst performers" data={data.movers} kind="worst" names={n} />
 
         <Card title="Stocks of the day" note="Most traded by value on the last trading day.">
-          <ol className="rows">
+          <Heads cols={["Stock", "Price", "Volume", "Change"]} />
+          <ol className="rows four">
             {data.most_traded.map((t) => (
               <li key={t.symbol}>
                 <Stock symbol={t.symbol} names={n} />
-                <span className="row-num muted">{crore(t.turnover)}</span>
+                <span className="row-num">{rupees(t.close)}</span>
+                <Volume volume={t.volume} turnover={t.turnover} />
                 <span className="row-num"><Change x={t.change} /></span>
               </li>
             ))}
           </ol>
         </Card>
         <Card title="Trending" note="Trading far above their usual volume: the last trading day against the 20 before it.">
-          <ol className="rows">
+          <Heads cols={["Stock", "Volume", "vs usual", "Change"]} />
+          <ol className="rows four">
             {data.trending.map((t) => (
               <li key={t.symbol}>
                 <Stock symbol={t.symbol} names={n} />
-                <span className="row-num muted">{t.ratio.toFixed(1)}× usual</span>
+                <Volume volume={t.volume} turnover={t.turnover} />
+                <span className="row-num vol">
+                  {t.ratio.toFixed(1)}×<span className="vol-value">avg {shares(t.avg_volume)}</span>
+                </span>
                 <span className="row-num"><Change x={t.change} /></span>
               </li>
             ))}

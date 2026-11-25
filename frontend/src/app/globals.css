@@ -264,6 +264,47 @@ p {
   border-top: 1px solid var(--rule);
 }
 
+.rows.four li,
+.row-heads {
+  grid-template-columns: minmax(0, 1fr) auto 4.5rem 4rem;
+}
+
+.row-heads {
+  display: grid;
+  gap: 0.75rem;
+  color: var(--muted);
+  font-size: 0.75rem;
+  padding-bottom: 0.25rem;
+}
+
+.vol {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.25;
+}
+
+.vol-value {
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.scan {
+  margin: 1rem 0 1.5rem;
+}
+
+.scan-table td {
+  vertical-align: middle;
+}
+
+.scan-table .vol {
+  align-items: flex-end;
+}
+
+.strong-link {
+  font-weight: 600;
+  text-decoration: none;
+}
+
 .rows li.sector-row {
   grid-template-columns: minmax(0, 9rem) minmax(0, 1fr) 4.5rem;
   align-items: center;

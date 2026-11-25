@@ -189,16 +189,61 @@ export type Backtest = {
 };
 
 export type Period = "day" | "week" | "month";
-export type Mover = { symbol: string; change: number; close: number };
+export type Mover = { symbol: string; change: number; close: number; volume: number; turnover: number };
 export type Overview = {
   as_of: string;
   universe: string;
   names: Record<string, string>;
   sectors: Record<Period, { sector: string; index: string; change: number }[]>;
   movers: Record<Period, { best: Mover[]; worst: Mover[] }>;
-  trending: { symbol: string; ratio: number; change: number | null; turnover: number }[];
-  most_traded: { symbol: string; turnover: number; close: number; change: number | null }[];
+  trending: { symbol: string; ratio: number; change: number | null; volume: number; avg_volume: number; turnover: number }[];
+  most_traded: { symbol: string; turnover: number; volume: number; close: number; change: number | null }[];
   news: { symbol: string; change: number; category: string; text: string; when: string; url: string | null }[];
+};
+
+export type ScanForecast = {
+  target_date: string;
+  median: number;
+  expected_return: number;
+  band80: [number, number];
+  p_up: number;
+  p_beat_nifty: number;
+  results_in_window: boolean;
+  lean: string;
+};
+export type ScanRow = {
+  symbol: string;
+  name: string;
+  price: number;
+  change_day: number | null;
+  volume: number;
+  turnover: number;
+  signal: string;
+  confidence: string;
+  fair_value: number | null;
+  upside: number | null;
+  red_flags: string[];
+  model_notes?: string[];
+  company_type: string;
+  forecast: Record<string, ScanForecast> | null;
+};
+export type ScanResult = {
+  price_day: string;
+  run_at: string;
+  complete: boolean;
+  universe: string;
+  scanned: number;
+  total: number;
+  errors: Record<string, string>;
+  picks: ScanRow[];
+  ranked: ScanRow[];
+};
+export type ScanStatus = {
+  running: boolean;
+  started?: boolean;
+  progress: { price_day?: string; done?: number; total?: number; current?: string; error?: string };
+  latest: ScanResult | null;
+  partial?: ScanResult | null;
 };
 
 export type HorizonForecast = {
@@ -295,6 +340,8 @@ export const api = {
   sector: (s: string) => call<SectorPicture>(`/api/company/${encodeURIComponent(s)}/sector`),
   sectors: () => call<{ as_of: string; sectors: SectorStat[] }>(`/api/sectors`),
   overview: () => call<Overview>(`/api/overview`),
+  scan: () => call<ScanStatus>(`/api/scan`),
+  startScan: () => call<ScanStatus>(`/api/scan`, { method: "POST", headers: { "X-Equity-Desk": "1" } }),
   forecast: (s: string) => call<Forecast>(`/api/company/${encodeURIComponent(s)}/forecast`),
   sentiment: (s: string) => call<SentimentState>(`/api/company/${encodeURIComponent(s)}/sentiment`),
   startSentiment: (s: string, force = false) =>

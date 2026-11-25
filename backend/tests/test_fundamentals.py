@@ -153,3 +153,35 @@ def test_year_sheet_falls_back_to_capital_plus_reserves() -> None:
     assert _year_sheet({}, {"paid_up_capital": 5.0}) == {}  # partial: not a total
     real = {"equity_owners": 99.0}
     assert _year_sheet(real, {"paid_up_capital": 5.0, "reserves_ex_revaluation": 95.0}) is real
+
+
+def test_load_fundamentals_skips_unreadable_filings(monkeypatch) -> None:
+    from types import SimpleNamespace
+
+    from eqr import fundamentals as fm
+
+    good = SimpleNamespace(name="good", consolidated=True, period_end=None)
+    bad = SimpleNamespace(name="bad", consolidated=True, period_end=None)
+
+    class Src:
+        def list(self, symbol):
+            return [good, bad]
+
+        def fetch(self, ref):
+            if ref is bad:
+                raise ValueError("filing covers another period")
+            return "filing"
+
+    seen = {}
+
+    def fake_build(symbol, pairs):
+        seen["pairs"] = pairs
+
+        class F:
+            is_bank = False
+
+        return F()
+
+    monkeypatch.setattr(fm, "build_fundamentals", fake_build)
+    fm.load_fundamentals(Src(), "X")
+    assert seen["pairs"] == [(good, "filing")]

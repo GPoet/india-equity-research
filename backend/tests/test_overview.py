@@ -59,6 +59,7 @@ def test_unusual_volume_adjusts_for_splits_and_needs_liquidity() -> None:
     factors = {("S", ds[10]): 10.0}  # S split 1:10: later volume is 10x for the same trading
     top = unusual_volume(files, factors, n=5)
     assert top[0]["symbol"] == "A" and top[0]["ratio"] == pytest.approx(5.0)
+    assert top[0]["volume"] == 5000 and top[0]["avg_volume"] == pytest.approx(1000)
     assert all(t["symbol"] != "S" for t in top if t["ratio"] > 1.5)
     assert all(t["symbol"] != "TINY" for t in top)
 

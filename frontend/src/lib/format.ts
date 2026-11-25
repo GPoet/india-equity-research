@@ -34,3 +34,11 @@ export function num(x: number | null | undefined, digits = 2): string {
 export function fyLabel(isoDate: string): string {
   return "FY" + isoDate.slice(2, 4);
 }
+
+// Share counts in Indian units: 45,300 / 12.3 L / 1.24 Cr.
+export function shares(x: number | null | undefined): string {
+  if (x === null || x === undefined || !Number.isFinite(x)) return "–";
+  if (x >= CRORE) return (x / CRORE).toFixed(2) + " Cr";
+  if (x >= 1e5) return (x / 1e5).toFixed(1) + " L";
+  return inr.format(x);
+}

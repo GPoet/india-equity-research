@@ -11,6 +11,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field, replace
 from datetime import date
 
+from eqr.nse_client import NseError
 from eqr.sources.filings import FilingRef, FilingsSource
 from eqr.xbrl import Filing, Metrics
 
@@ -341,7 +342,17 @@ def load_fundamentals(source: FilingsSource, symbol: str) -> Fundamentals:
         raise ValueError(f"NSE lists no results filings for {symbol}")
     consolidated = any(r.consolidated for r in refs)
     chosen = [r for r in refs if r.consolidated == consolidated]
-    f = build_fundamentals(symbol, [(r, source.fetch(r)) for r in chosen])
+    pairs = []
+    for r in chosen:
+        try:
+            pairs.append((r, source.fetch(r)))
+        except (NseError, ValueError) as exc:
+            # One unreadable old filing (gone from NSE's archive, or filed under the wrong
+            # period) must not take the whole company down; its quarter is simply missing.
+            log.warning("%s: skipping filing for %s: %s", symbol, r.period_end, exc)
+    if not pairs:
+        raise ValueError(f"None of {symbol}'s results filings could be read")
+    f = build_fundamentals(symbol, pairs)
     if f.is_bank:
         f = _with_asset_quality(source, f, refs)
     return f

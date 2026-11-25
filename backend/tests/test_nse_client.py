@@ -112,3 +112,38 @@ def test_403_rewarms_once_then_succeeds(tmp_path: Path) -> None:
     client, session, _ = make(tmp_path, [FakeResp(403, "denied"), FakeResp(200, '{"ok": 1}')])
     assert client.get_json("a", ttl=None) == {"ok": 1}
     assert session.calls.count("https://www.nseindia.com/") == 2
+
+
+def test_background_requests_yield_to_waiting_foreground() -> None:
+    import threading
+    import time as _t
+
+    from eqr.nse_client import NseClient
+
+    class Resp:
+        status_code = 200
+        text = "ok"
+
+    class Session:
+        def get(self, url, **kw):
+            return Resp()
+
+    c = NseClient(min_interval=0, session_factory=Session)
+    done = threading.Event()
+
+    def bg():
+        with c.background():
+            c._fetch("https://x/bg")
+        done.set()
+
+    with c._fg_cond:
+        c._fg_waiting = 1  # a page request is waiting
+    t = threading.Thread(target=bg)
+    t.start()
+    _t.sleep(0.2)
+    assert not done.is_set()  # the scan held back
+    with c._fg_cond:
+        c._fg_waiting = 0
+        c._fg_cond.notify_all()
+    t.join(2)
+    assert done.is_set()

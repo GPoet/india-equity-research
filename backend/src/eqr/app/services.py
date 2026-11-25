@@ -16,6 +16,7 @@ from typing import Any, TypeVar
 
 import yfinance as yf
 
+from eqr.app.scanner import Scanner
 from eqr.forecast.dataset import observation
 from eqr.forecast.model import ForecastModel, forecast
 from eqr.fundamentals import Fundamentals, owners_profit
@@ -56,6 +57,7 @@ UNIVERSE_TTL = 24 * 3600
 OVERVIEW_DAYS = 22  # a month of trading days plus the day before
 NEWS_MOVERS = 5
 NIFTY500 = "https://nsearchives.nseindia.com/content/indices/ind_nifty500list.csv"
+NIFTY50 = "https://nsearchives.nseindia.com/content/indices/ind_nifty50list.csv"
 NEWS_CATEGORIES = (
     "Financial Result Updates",
     "Outcome of Board Meeting",
@@ -144,6 +146,7 @@ class LiveServices:
     def __init__(self, ctx: Context | None = None) -> None:
         self.ctx = ctx or Context()
         self._memo = _Memo()
+        self._scanner: Scanner | None = None
         self._sentiment_store = ResearchStore(
             self.ctx.data_dir / "sentiment", max_age_hours=SENTIMENT_HOURS
         )
@@ -264,6 +267,37 @@ class LiveServices:
             }
 
         return self._memo.get("nifty500", UNIVERSE_TTL, make)
+
+    def _nifty50(self) -> set[str]:
+        def make() -> set[str]:
+            text = self.ctx.client.get_bytes(NIFTY50).decode("utf-8-sig")
+            return {
+                r["Symbol"].strip() for r in csv.DictReader(io.StringIO(text)) if r.get("Symbol")
+            }
+
+        return self._memo.get("nifty50", UNIVERSE_TTL, make)
+
+    @property
+    def scanner(self) -> Scanner:
+        if self._scanner is None:
+            self._scanner = Scanner(
+                self.ctx, self.ctx.data_dir / "scan", self._nifty500, self._nifty50
+            )
+        return self._scanner
+
+    def start_background(self) -> None:
+        self.scanner.start_schedule()
+
+    def stop_background(self) -> None:
+        if self._scanner is not None:
+            self._scanner.stop()
+
+    def scan(self) -> dict[str, Any]:
+        return self.scanner.status()
+
+    def start_scan(self) -> dict[str, Any]:
+        started = self.scanner.start()
+        return {"started": started, **self.scanner.status()}
 
     def overview(self) -> dict[str, Any]:
         def make() -> dict[str, Any]:
