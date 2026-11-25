@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import date
 from typing import Any
 
@@ -16,6 +16,7 @@ from eqr.sources.prices import history, quote, yahoo_symbol
 from eqr.sources.shareholding import Ownership
 from eqr.valuation.blend import Blend, blend
 from eqr.valuation.context import PriceData, ValuationContext, build_context
+from eqr.valuation.holdco import is_holding_company
 from eqr.valuation.lenses_quality import QUALITY_LENSES
 from eqr.valuation.lenses_value import VALUE_LENSES, reverse_dcf, reverse_residual_income
 from eqr.valuation.models import LensResult
@@ -127,10 +128,27 @@ def value_company(
         )
     if ownership is None:
         warnings.append("Shareholding pattern unavailable: promoter and pledge check skipped")
+    holdco, holdco_why = is_holding_company(f)
+    if holdco:
+        warnings.append(
+            f"Holding company ({holdco_why}). Its value is the market value of its stakes, so a "
+            "sum-of-the-parts at those companies' share prices is the right method; the formula "
+            "values here do not capture it."
+        )
+        result = replace(
+            result,
+            confidence="low",
+            reasons=(
+                *result.reasons,
+                "Holding company: formula values understate or misstate its stakes",
+            ),
+        )
     company_type = (
-        "bank"
+        "holding company"
+        if holdco
+        else "bank"
         if f.is_bank
-        else "financial (NBFC / insurer / holding)"
+        else "financial (NBFC / insurer)"
         if f.is_financial
         else "operating company"
     )

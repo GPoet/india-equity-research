@@ -41,6 +41,9 @@ INCOME: dict[str, tuple[str, ...]] = {
     "purchases_stock_in_trade": ("PurchasesOfStockInTrade",),
     "inventory_change": ("ChangesInInventoriesOfFinishedGoodsWorkInProgressAndStockInTrade",),
     "other_expenses": ("OtherExpenses",),
+    "share_of_associates": (
+        "ShareOfProfitLossOfAssociatesAndJointVenturesAccountedForUsingEquityMethod",
+    ),
 }
 
 BALANCE: dict[str, tuple[str, ...]] = {
@@ -70,6 +73,8 @@ BALANCE: dict[str, tuple[str, ...]] = {
     "other_equity": ("OtherEquity",),
     "noncurrent_investments": ("NoncurrentInvestments",),
     "total_liabilities": ("Liabilities",),
+    "investments": ("Investments",),
+    "equity_method_investments": ("InvestmentsAccountedForUsingEquityMethod",),
 }
 
 # Banks file under the banking taxonomy (Banking Regulation Act format).
