@@ -36,6 +36,11 @@ INCOME: dict[str, tuple[str, ...]] = {
     "capex_ppe": ("PurchaseOfPropertyPlantAndEquipmentClassifiedAsInvestingActivities",),
     "capex_intangibles": ("PurchaseOfIntangibleAssetsClassifiedAsInvestingActivities",),
     "dividends_paid": ("DividendsPaidClassifiedAsFinancingActivities",),
+    "interest_paid_operating": ("InterestPaidClassifiedAsOperatingActivities",),
+    "cost_of_materials": ("CostOfMaterialsConsumed",),
+    "purchases_stock_in_trade": ("PurchasesOfStockInTrade",),
+    "inventory_change": ("ChangesInInventoriesOfFinishedGoodsWorkInProgressAndStockInTrade",),
+    "other_expenses": ("OtherExpenses",),
 }
 
 BALANCE: dict[str, tuple[str, ...]] = {
@@ -60,6 +65,11 @@ BALANCE: dict[str, tuple[str, ...]] = {
     "subordinated_liabilities": ("SubordinatedLiabilities",),
     "deposits": ("Deposits",),
     "loans": ("Loans",),
+    "ppe": ("PropertyPlantAndEquipment",),
+    "cwip": ("CapitalWorkInProgress",),
+    "other_equity": ("OtherEquity",),
+    "noncurrent_investments": ("NoncurrentInvestments",),
+    "total_liabilities": ("Liabilities",),
 }
 
 # Banks file under the banking taxonomy (Banking Regulation Act format).

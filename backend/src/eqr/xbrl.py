@@ -89,9 +89,12 @@ class Filing:
         return self._income(self.year_to_date)
 
     def balance_metrics(self) -> Metrics:
-        if self.balance_sheet is None:
+        return self.balance_metrics_for(self.balance_sheet)
+
+    def balance_metrics_for(self, period: Period | None) -> Metrics:
+        if period is None:
             return {}
-        return _bank_balance(self.balance_sheet) if self.is_bank else _balance(self.balance_sheet)
+        return _bank_balance(period) if self.is_bank else _balance(period)
 
 
 def _first(values: Mapping[str, float], names: tuple[str, ...]) -> float | None:

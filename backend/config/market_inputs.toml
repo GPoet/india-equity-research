@@ -1,0 +1,32 @@
+# Market-wide inputs for valuation. Edit these when they move; every valuation
+# shows them and warns when as_of is older than max_age_days.
+# All rates are percentages.
+
+as_of = "2026-11-17"
+max_age_days = 30
+
+# India 10-year G-sec yield. Trading Economics reported ~7.25-7.34% on 17 Nov 2026.
+gsec_10y = 7.30
+gsec_source = "Trading Economics, 17 Nov 2026 (7.25-7.34% range reported that day)"
+
+# Damodaran, Country Default Spreads and Risk Premiums, updated 5 Jan 2026:
+# India rated Baa3, sovereign default spread 1.87%, country risk premium 2.85%,
+# total equity risk premium 7.08%.
+# Rupee risk-free rate = G-sec yield minus the sovereign default spread (Damodaran's method).
+sovereign_default_spread = 1.87
+equity_risk_premium = 7.08
+erp_source = "Damodaran ctryprem.html, updated 5 Jan 2026"
+
+# AAA corporate bond spread over G-sec, for Graham's formula (he used the AAA yield).
+# Crisil: 10y corporate bond 7.73% vs 10y G-sec 7.02% on 31 Mar 2026 = 0.71 pts.
+aaa_spread_over_gsec = 0.71
+aaa_source = "Crisil Rateview Apr 2026 (31 Mar 2026 levels); refresh from CCIL/FIMMDA when possible"
+
+# Long-run nominal growth for terminal values. Must stay below the rupee risk-free rate.
+terminal_growth = 5.0
+
+# Tax rate used when a company's own effective rate cannot be computed (new regime, 25.17%).
+default_tax_rate = 25.17
+
+# Margin of safety used for the buy-price flag.
+margin_of_safety = 15.0
