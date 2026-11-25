@@ -165,11 +165,14 @@ def earnings_power_value(ctx: ValuationContext) -> LensResult:
             key, name, school, "value", "Needs positive operating profit and WACC"
         )
     adj = 0.0
-    if ctx.years:
-        maint, _ = maintenance_capex(ctx.years[0], ctx.years[1] if len(ctx.years) > 1 else None)
-        dep = ctx.years[0].income.get("depreciation")
-        if maint is not None and dep is not None:
-            adj = max(dep - maint, 0.0) * (1 - ctx.tax_rate)  # depreciation above upkeep spending
+    gaps = []  # depreciation minus maintenance capex, over the same years as the EBIT average
+    for i, y in enumerate(ctx.years[: len(samples)]):
+        maint, _ = maintenance_capex(y, ctx.years[i + 1] if i + 1 < len(ctx.years) else None)
+        if maint is not None and y.income.get("depreciation") is not None:
+            gaps.append(y.income["depreciation"] - maint)
+    if gaps:
+        # Depreciation above upkeep spending adds to earnings power; below it subtracts.
+        adj = statistics.mean(gaps) * (1 - ctx.tax_rate)
     epv_firm = (ebit * (1 - ctx.tax_rate) + adj) / ctx.wacc
     value = _per_share(ctx, _equity_from_ev(ctx, epv_firm))
     if value is None:
@@ -245,7 +248,8 @@ def lynch(ctx: ValuationContext) -> LensResult:
         )
     g_pct = g * 100
     pe = ctx.p.price / ctx.eps_ttm
-    dy_pct = (ctx.p.dps_ttm or 0.0) / ctx.p.price * 100
+    dy_known = ctx.p.dps_ttm is not None
+    dy_pct = (ctx.p.dps_ttm or 0.0) / ctx.p.price * 100  # unknown dividend: ratio excludes it
     ratio = fx.lynch_ratio(pe, g_pct, dy_pct)
     verdict = (
         "very attractive"
@@ -267,6 +271,7 @@ def lynch(ctx: ValuationContext) -> LensResult:
         summary=(
             f"Fair P/E = earnings growth ({g_pct:.1f}%, capped at 25). (Growth + yield) / P/E = "
             f"{ratio:.2f}; Lynch wanted 2 or more"
+            + ("" if dy_known else " (dividend yield unknown, left out)")
         ),
         inputs={
             "eps_ttm": ctx.eps_ttm,
@@ -281,9 +286,13 @@ def lynch(ctx: ValuationContext) -> LensResult:
 def _historical_pe(ctx: ValuationContext) -> float | None:
     pes = []
     for y in ctx.years[:10]:
-        price, pat = ctx.p.fy_end_prices.get(y.fy_end), owners_pat(y.income)
-        if price and pat and pat > 0 and ctx.shares:
-            pes.append(price / (pat / ctx.shares))
+        price, pat, shares = (
+            ctx.p.fy_end_prices.get(y.fy_end),
+            owners_pat(y.income),
+            ctx.adjusted_shares(y),
+        )
+        if price and pat and pat > 0 and shares:
+            pes.append(price / (pat / shares))
     return statistics.median(pes) if len(pes) >= 3 else None
 
 
@@ -332,7 +341,9 @@ def dividend_discount(ctx: ValuationContext) -> LensResult:
             "value",
             f"Payout {payout:.0%} / {paid_years} paying years: dividends are not the main return",
         )
-    g = min(ctx.growth or 0.0, OWNER_EARNINGS_MAX_GROWTH)
+    if ctx.growth is None:
+        return not_applicable(key, name, school, "value", "Growth estimate unavailable")
+    g = min(ctx.growth, OWNER_EARNINGS_MAX_GROWTH)
     value = fx.two_stage_pv(dps, g, ctx.m.terminal_growth, ctx.cost_of_equity)
     return LensResult(
         key,
@@ -356,7 +367,9 @@ def roe_samples(ctx: ValuationContext, n: int = 3) -> list[float]:
     ys = ctx.years
     for i, y in enumerate(ys):
         pat, eq = owners_pat(y.income), y.balance.get("equity_owners")
-        prev = ys[i + 1].balance.get("equity_owners") if i + 1 < len(ys) else None
+        older = ys[i + 1] if i + 1 < len(ys) else None
+        adjacent = older is not None and y.fy_end.year - older.fy_end.year == 1
+        prev = older.balance.get("equity_owners") if adjacent else None
         if pat is None or eq is None or eq <= 0:
             continue
         out.append(pat / ((eq + prev) / 2) if prev else pat / eq)
@@ -368,9 +381,13 @@ def roe_samples(ctx: ValuationContext, n: int = 3) -> list[float]:
 def _retention(ctx: ValuationContext) -> float | None:
     ratios = []
     for y in ctx.years[:5]:
-        dps, pat = ctx.p.dps_by_fy.get(y.fy_end), owners_pat(y.income)
-        if dps is not None and pat and pat > 0 and ctx.shares:
-            ratios.append(min(max(1 - dps * ctx.shares / pat, 0.0), 1.0))
+        dps, pat, shares = (
+            ctx.p.dps_by_fy.get(y.fy_end),
+            owners_pat(y.income),
+            ctx.adjusted_shares(y),
+        )
+        if dps is not None and pat and pat > 0 and shares:
+            ratios.append(min(max(1 - dps * shares / pat, 0.0), 1.0))
     return statistics.mean(ratios) if ratios else None
 
 

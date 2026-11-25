@@ -73,3 +73,33 @@ def test_financial_weights_ignore_dcf() -> None:
     ]
     out = blend(lenses, price=100, financial=True, margin_of_safety=0.15)
     assert out.mid < 200
+
+
+def test_agreeing_models_do_not_flip_signal_on_small_moves() -> None:
+    same = [v(k, 100) for k in ("dcf", "owner_earnings", "epv", "graham_formula", "lynch")]
+    assert blend(same, price=99, financial=False, margin_of_safety=0.15).signal == "Fairly valued"
+    assert blend(same, price=101, financial=False, margin_of_safety=0.15).signal == "Fairly valued"
+    assert blend(same, price=80, financial=False, margin_of_safety=0.15).signal == "Undervalued"
+    assert blend(same, price=120, financial=False, margin_of_safety=0.15).signal == "Overvalued"
+
+
+def test_negative_model_value_counts_and_flags() -> None:
+    lenses = [
+        v("dcf", -400),
+        v("owner_earnings", 120),
+        v("epv", 110),
+        v("graham_formula", 100),
+        v("lynch", 90),
+    ]
+    out = blend(lenses, price=300, financial=False, margin_of_safety=0.15)
+    assert "dcf" in out.used  # kept, as zero
+    assert any("negative" in f for f in out.red_flags)
+    without = blend(lenses[1:], price=300, financial=False, margin_of_safety=0.15)
+    assert out.mid < without.mid
+
+
+def test_data_warnings_lower_confidence() -> None:
+    clean = blend(CORE, price=100, financial=False, margin_of_safety=0.15)
+    noisy = blend(CORE, price=100, financial=False, margin_of_safety=0.15, data_warnings=2)
+    order = ["low", "medium", "high"]
+    assert order.index(noisy.confidence) < order.index(clean.confidence)

@@ -52,6 +52,8 @@ class YearRow:
     income: Metrics
     income_source: str  # "annual" | "sum_of_quarters"
     balance: Metrics  # at fy_end; {} when not filed
+    shares: float | None = None  # share count for the year (see year_shares)
+    shares_exact: bool = False  # paid-up capital / face value, confirmed by profit / EPS
 
 
 @dataclass(frozen=True)
@@ -113,47 +115,72 @@ def shares_from(m: Metrics) -> tuple[float | None, str]:
     return None, "share count unavailable"
 
 
-# Share-count multiples that come from bonus issues and splits (no money raised).
-# Mergers, QIPs and rights issues give arbitrary ratios (HDFC Bank 2023: 1.36x).
-ACTION_RATIOS = (1.5, 2.0, 2.5, 3.0, 4.0, 5.0, 6.0, 8.0, 10.0, 20.0, 25.0, 50.0, 100.0)
-ACTION_TOLERANCE = 0.02
+# Bonus a:b (a new shares for every b held) multiplies shares by (a + b) / b. Limited to the
+# forms Indian companies use (a, b up to 5, plus 1:10) so noise cannot match a rare ratio.
+BONUS_RATIOS = tuple(sorted({(a + b) / b for a in range(1, 6) for b in range(1, 6)} | {1.1}))
+SPLIT_RATIOS = (2.0, 2.5, 4.0, 5.0, 10.0, 20.0, 50.0, 100.0)  # face value 10 -> 1 = 10x
+ACTION_TOLERANCE = 0.015  # employee stock options add ~1% a year on top of a bonus
+# Equity may grow by at most the year's profit plus this share of opening equity for a
+# share jump to count as a bonus: anything more means money came in (rights, QIP, merger).
+BONUS_EQUITY_SLACK = 0.10
 
 
-def _action_ratio(ratio: float) -> float | None:
-    for nice in ACTION_RATIOS:
-        for candidate in (nice, 1 / nice):  # reverse splits / consolidations too
+def _match(ratio: float, candidates: tuple[float, ...]) -> float | None:
+    for c in candidates:
+        for candidate in (c, 1 / c):  # reverse splits / consolidations too
             if abs(ratio / candidate - 1) <= ACTION_TOLERANCE:
                 return candidate
     return None
 
 
-def share_action_factors(years: tuple[YearRow, ...]) -> dict[date, float]:
+def year_shares(y: YearRow) -> float | None:
+    return y.shares if y.shares is not None else shares_from(y.income)[0]
+
+
+def _bonus_confirmed(newer: YearRow, older: YearRow) -> bool:
+    eq_new, eq_old = newer.balance.get("equity_owners"), older.balance.get("equity_owners")
+    pat = owners_profit(newer.income)
+    if eq_new is None or eq_old is None or pat is None or eq_old <= 0:
+        return False
+    return eq_new - eq_old <= max(pat, 0.0) + BONUS_EQUITY_SLACK * eq_old
+
+
+def share_action_factors(years: tuple[YearRow, ...]) -> tuple[dict[date, float], list[str]]:
     """For each fiscal year, the bonus/split multiple applied to shares since then.
 
-    Detected from the filings: a year-on-year share-count jump by a round ratio is a
-    bonus or split (Yahoo's split list misses Indian bonus issues, e.g. Bajaj Finance
-    2025). Any other jump is real issuance and is left in, so it shows as dilution.
+    Splits are read from face-value changes, which are exact. A remaining round jump
+    (a:b bonus) counts only when the balance sheets show no money came in; otherwise
+    it is treated as real issuance (dilution) and noted. Yahoo's split list is not used:
+    it misses Indian bonus issues (Bajaj Finance 2025).
     """
     factors: dict[date, float] = {}
+    notes: list[str] = []
     cumulative = 1.0
     newer: YearRow | None = None
     newer_shares: float | None = None
     for y in years:  # newest first
-        shares, _ = shares_from(y.income)
-        if newer is not None and newer_shares and shares:
+        shares = year_shares(y)
+        exact = y.shares_exact and newer is not None and newer.shares_exact
+        if newer is not None and newer_shares and shares and exact:
             ratio = newer_shares / shares
-            # A split shows up exactly as a face-value change; test only the rest as a bonus,
-            # so a split plus a small merger issue (Tata Steel 2022) is still recognised.
             split = 1.0
             fv_old, fv_new = y.income.get("face_value"), newer.income.get("face_value")
-            if fv_old and fv_new and (s := _action_ratio(fv_old / fv_new)):
-                split = s
-            bonus = _action_ratio(ratio / split) or 1.0
-            cumulative *= split * bonus
+            if fv_old and fv_new and (found := _match(fv_old / fv_new, SPLIT_RATIOS)):
+                split = found
+            bonus = _match(ratio / split, BONUS_RATIOS)
+            if bonus and bonus != 1.0:
+                if _bonus_confirmed(newer, y):
+                    split *= bonus
+                else:
+                    notes.append(
+                        f"Shares rose {ratio / split:.2f}x in FY{newer.fy_end.year % 100}; could not "
+                        "confirm a bonus from the balance sheet, so treated as dilution"
+                    )
+            cumulative *= split
         factors[y.fy_end] = cumulative
         if shares:
             newer, newer_shares = y, shares
-    return factors
+    return factors, notes
 
 
 def _fy_end(day: date) -> date:
@@ -191,7 +218,9 @@ def _ttm_cash(by_end: dict[date, Filing], years: list[YearRow]) -> tuple[Metrics
         return {}, "none"
     latest_end = max(by_end)
     latest = by_end[latest_end]
-    fy = next((y for y in years if y.fy_end == _fy_end(latest_end) or y.fy_end < latest_end), None)
+    # The fiscal year that ended just before the latest quarter; no older substitute.
+    prev_fy_end = date(latest_end.year - (0 if latest_end.month > 3 else 1), 3, 31)
+    fy = next((y for y in years if y.fy_end == prev_fy_end), None)
     if latest_end.month == 3 and latest.year_to_date and latest.year_to_date.days >= 360:
         ytd = latest.year_to_date_metrics()
         return {k: ytd.get(k) for k in CASH_KEYS}, "latest FY"
@@ -221,12 +250,16 @@ def _years(by_end: dict[date, Filing], quarters: list[QuarterRow]) -> list[YearR
         q4 = by_end.get(fy_end)
         if q4 and q4.year_to_date and q4.year_to_date.days >= 360:
             income, source = q4.year_to_date_metrics(), "annual"
+            shares, how = shares_from(income)
         else:
             in_year = [q for q in quarters if _fy_end(q.period_end) == fy_end]
             if len(in_year) != 4 or not _consecutive(in_year):
                 continue  # incomplete year (e.g. current FY in progress): no row
             income, source = _sum_metrics([q.income for q in in_year]), "sum_of_quarters"
-        years.append(YearRow(fy_end, income, source, march_sheets.get(fy_end, {})))
+            # Summed EPS is not restated for a mid-year bonus: take shares from the last quarter.
+            shares, how = shares_from(in_year[0].income)
+        exact = how.startswith("paid-up capital / face value (matches")
+        years.append(YearRow(fy_end, income, source, march_sheets.get(fy_end, {}), shares, exact))
     return years
 
 

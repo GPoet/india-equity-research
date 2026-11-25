@@ -7,7 +7,7 @@ import statistics
 from eqr.fundamentals import YearRow
 from eqr.valuation import formulas as fx
 from eqr.valuation.cashflows import ebit
-from eqr.valuation.context import ValuationContext, owners_pat
+from eqr.valuation.context import ValuationContext, cash_like, owners_pat
 from eqr.valuation.lenses_value import roe_samples
 from eqr.valuation.models import LensResult, not_applicable
 from eqr.xbrl import Metrics
@@ -17,19 +17,26 @@ def _ratio(a: float | None, b: float | None) -> float | None:
     return a / b if a is not None and b else None
 
 
-def _cogs(m: Metrics) -> float | None:
-    parts = [
-        m.get("cost_of_materials"),
-        m.get("purchases_stock_in_trade"),
-        m.get("inventory_change"),
-    ]
-    known = [p for p in parts if p is not None]
-    return sum(known) if known else None
+COGS_PARTS = ("cost_of_materials", "purchases_stock_in_trade", "inventory_change")
 
 
-def _gross_margin(m: Metrics) -> float | None:
-    rev, cogs = m.get("revenue"), _cogs(m)
-    return (rev - cogs) / rev if rev and cogs is not None else None
+def _gross_margins(cur: Metrics, prev: Metrics) -> tuple[float | None, float | None]:
+    """Gross margins for two years built from the same cost lines, so a line tagged in one
+    year and not the other cannot fake a margin change."""
+    parts = [k for k in COGS_PARTS if cur.get(k) is not None and prev.get(k) is not None]
+    if not parts:
+        return None, None
+
+    def gm(m: Metrics) -> float | None:
+        rev = m.get("revenue")
+        return (rev - sum(m[k] for k in parts)) / rev if rev else None  # type: ignore[misc]
+
+    return gm(cur), gm(prev)
+
+
+def _no_borrowings(b: Metrics) -> bool:
+    keys = ("borrowings_current", "borrowings_noncurrent", "borrowings", "debt_securities")
+    return all(b.get(k) is None for k in keys)
 
 
 def _two_full_years(ctx: ValuationContext) -> tuple[YearRow, YearRow] | None:
@@ -61,7 +68,7 @@ def piotroski(ctx: ValuationContext) -> LensResult:
     lev_prev = _ratio(pb.get("borrowings_noncurrent"), pb.get("total_assets"))
     cr = _ratio(cb.get("current_assets"), cb.get("current_liabilities"))
     cr_prev = _ratio(pb.get("current_assets"), pb.get("current_liabilities"))
-    gm, gm_prev = _gross_margin(c), _gross_margin(p)
+    gm, gm_prev = _gross_margins(c, p)
     at = _ratio(c.get("revenue"), cb.get("total_assets"))
     at_prev = _ratio(p.get("revenue"), pb.get("total_assets"))
     shares, shares_prev = cb.get("equity_share_capital"), pb.get("equity_share_capital")
@@ -92,7 +99,9 @@ def piotroski(ctx: ValuationContext) -> LensResult:
         return not_applicable(
             key, name, school, "score", f"Only {len(known)} of 9 tests computable"
         )
-    verdict = "strong" if score >= 7 else "weak" if score <= 3 else "average"
+    # Piotroski's 7+/9 and 3-/9 bands, scaled when only some tests could be computed.
+    share = score / len(known)
+    verdict = "strong" if share >= 7 / 9 else "weak" if share <= 3 / 9 else "average"
     failed = [k for k, v in known.items() if not v]
     return LensResult(
         key,
@@ -174,7 +183,7 @@ def beneish(ctx: ValuationContext) -> LensResult:
 
     rev, rev_p = c.get("revenue"), p.get("revenue")
     rec, rec_p = cb.get("trade_receivables"), pb.get("trade_receivables")
-    gm, gm_p = _gross_margin(c), _gross_margin(p)
+    gm, gm_p = _gross_margins(c, p)
     ta, ta_p = cb.get("total_assets"), pb.get("total_assets")
     ca, ca_p = cb.get("current_assets"), pb.get("current_assets")
     ppe, ppe_p = cb.get("ppe"), pb.get("ppe")
@@ -212,7 +221,12 @@ def beneish(ctx: ValuationContext) -> LensResult:
             "score",
             "Missing receivables, margins, fixed assets or expenses for two years",
         )
-    ltd, ltd_p = ltd or 0.0, ltd_p or 0.0  # long-term borrowings line absent = none
+    if ltd is None and _no_borrowings(cb):
+        ltd = 0.0  # no borrowing lines at all: debt-free
+    if ltd_p is None and _no_borrowings(pb):
+        ltd_p = 0.0
+    if ltd is None or ltd_p is None:
+        return not_applicable(key, name, school, "score", "Long-term borrowings missing")
     try:
         idx = {
             "dsri": (rec / rev) / (rec_p / rev_p),
@@ -247,15 +261,11 @@ def magic_formula(ctx: ValuationContext) -> LensResult:
         return not_applicable(
             key, name, school, "metric", "Greenblatt excludes financial companies"
         )
+    # One date throughout: the latest annual balance sheet and that year's operating profit.
     y = next((y for y in ctx.years if y.balance), None)
-    e = ebit(ctx.f.ttm) if ebit(ctx.f.ttm) is not None else (ebit(y.income) if y else None)
-    if (
-        y is None
-        or e is None
-        or ctx.market_cap is None
-        or ctx.debt is None
-        or ctx.cash_like is None
-    ):
+    e = ebit(y.income) if y else None
+    cash = cash_like(y.balance) if y else None
+    if y is None or e is None or ctx.market_cap is None or ctx.debt is None or cash is None:
         return not_applicable(
             key, name, school, "metric", "Needs operating profit, balance sheet, debt and cash"
         )
@@ -264,9 +274,12 @@ def magic_formula(ctx: ValuationContext) -> LensResult:
         return not_applicable(
             key, name, school, "metric", "Missing working capital or fixed assets"
         )
-    nwc = (b["current_assets"] - ctx.cash_like) - (
-        b["current_liabilities"] - (b.get("borrowings_current") or 0.0)
-    )
+    short_debt = b.get("borrowings_current")
+    if short_debt is None:
+        if not _no_borrowings(b):
+            return not_applicable(key, name, school, "metric", "Short-term borrowings missing")
+        short_debt = 0.0  # debt-free
+    nwc = (b["current_assets"] - cash) - (b["current_liabilities"] - short_debt)
     capital = max(nwc, 0.0) + b["ppe"]
     ev = ctx.market_cap + ctx.debt - ctx.cash_like
     ey, roc = e / ev if ev > 0 else None, e / capital if capital > 0 else None
@@ -297,7 +310,11 @@ def coffee_can(ctx: ValuationContext) -> LensResult:
     if len(ys) < 4:
         return not_applicable(key, name, school, "screen", "Needs at least 4 years of history")
     top = "total_income" if ctx.f.is_bank else "revenue"
-    growth = [_ratio(a.income.get(top), b.income.get(top)) for a, b in zip(ys, ys[1:])]
+    growth = [
+        _ratio(a.income.get(top), b.income.get(top))
+        for a, b in zip(ys, ys[1:])
+        if a.fy_end.year - b.fy_end.year == 1  # year-on-year only; skip gaps
+    ]
     growth_ok = [g - 1 >= 0.10 for g in growth if g is not None]
     if ctx.f.is_financial:
         returns = roe_samples(ctx, n=10)
@@ -316,7 +333,8 @@ def coffee_can(ctx: ValuationContext) -> LensResult:
         label, bar = "ROCE", 0.15
     returns_ok = [r >= bar for r in returns]
     passed = bool(growth_ok) and bool(returns_ok) and all(growth_ok) and all(returns_ok)
-    verdict = "passes" if passed else "fails"
+    full_history = len(growth_ok) >= 10 and len(returns_ok) >= 10
+    verdict = ("passes" if full_history else "passes so far") if passed else "fails"
     return LensResult(
         key,
         name,
@@ -389,12 +407,21 @@ def retained_earnings_test(ctx: ValuationContext) -> LensResult:
     ys = ctx.years[:5]
     if len(ys) < 5 or not ctx.shares:
         return not_applicable(key, name, school, "screen", "Needs 5 fiscal years")
-    # Price at the end of the oldest year, against earnings retained in the 4 years after it.
+    if ys[0].fy_end.year - ys[-1].fy_end.year != 4:
+        return not_applicable(key, name, school, "screen", "Needs 5 consecutive fiscal years")
+    # Market value from the end of the oldest year to the end of the latest one, against
+    # earnings retained in the 4 years between, all in that year's (adjusted) share count.
     start = ctx.p.fy_end_prices.get(ys[-1].fy_end)
+    end = ctx.p.fy_end_prices.get(ys[0].fy_end)
+    shares_start, shares_end = ctx.adjusted_shares(ys[-1]), ctx.adjusted_shares(ys[0])
     retained = 0.0
     for y in ys[:-1]:
-        pat, dps = owners_pat(y.income), ctx.p.dps_by_fy.get(y.fy_end)
-        if pat is None or dps is None:
+        pat, dps, shares = (
+            owners_pat(y.income),
+            ctx.p.dps_by_fy.get(y.fy_end),
+            ctx.adjusted_shares(y),
+        )
+        if pat is None or dps is None or not shares:
             return not_applicable(
                 key,
                 name,
@@ -402,10 +429,12 @@ def retained_earnings_test(ctx: ValuationContext) -> LensResult:
                 "screen",
                 f"Profit or dividends missing for FY{y.fy_end.year % 100}",
             )
-        retained += pat - dps * ctx.shares
+        retained += pat - dps * shares
     earned = sum(owners_pat(y.income) or 0.0 for y in ys[:-1])
-    if start is None or earned <= 0:
-        return not_applicable(key, name, school, "screen", "Start price unavailable or no profit")
+    if start is None or end is None or not shares_start or not shares_end or earned <= 0:
+        return not_applicable(
+            key, name, school, "screen", "Fiscal-year-end prices, shares or profit unavailable"
+        )
     if retained < 0.20 * earned:
         return not_applicable(
             key,
@@ -414,7 +443,7 @@ def retained_earnings_test(ctx: ValuationContext) -> LensResult:
             "screen",
             f"Pays out {1 - retained / earned:.0%} of profit; the test needs material retained earnings",
         )
-    gain = (ctx.p.price - start) * ctx.shares
+    gain = end * shares_end - start * shares_start
     ratio = gain / retained
     return LensResult(
         key,
@@ -488,12 +517,12 @@ def roic_vs_wacc(ctx: ValuationContext) -> LensResult:
         e is None
         or b.get("total_equity") is None
         or b.get("total_debt") is None
-        or b.get("cash") is None
+        or cash_like(b) is None
     ):
         return not_applicable(
             key, name, school, "metric", "Missing operating profit, equity, debt or cash"
         )
-    invested = b["total_equity"] + b["total_debt"] - b["cash"]
+    invested = b["total_equity"] + b["total_debt"] - cash_like(b)
     if invested <= 0:
         return not_applicable(
             key,

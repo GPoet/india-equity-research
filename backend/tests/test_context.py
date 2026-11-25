@@ -7,7 +7,7 @@ from eqr.market import load_market_inputs
 from eqr.valuation.context import PriceData, build_context
 
 
-def year(fy: int, revenue: float, pat: float, shares: float) -> YearRow:
+def year(fy: int, revenue: float, pat: float, shares: float, equity: float = 1000.0) -> YearRow:
     income = {
         "revenue": revenue,
         "pat": pat,
@@ -16,7 +16,7 @@ def year(fy: int, revenue: float, pat: float, shares: float) -> YearRow:
         "tax": pat * 0.25,
         "pbt": pat * 1.25,
     }
-    return YearRow(date(fy, 3, 31), income, "annual", {})
+    return YearRow(date(fy, 3, 31), income, "annual", {"equity_owners": equity}, shares, True)
 
 
 def fundamentals(years: list[YearRow]) -> Fundamentals:
@@ -64,11 +64,12 @@ def test_cyclical_profit_uses_revenue_growth_only() -> None:
 
 
 def test_bonus_plus_split_detected() -> None:
-    # Bajaj Finance 2025: 4:1 bonus + 2:1 split = 10x shares, no money raised.
-    ys = [
-        year(2026 - i, 100 * 1.15 ** (5 - i), 10 * 1.15 ** (5 - i), 1000 if i == 0 else 100)
-        for i in range(6)
-    ]
+    # Bajaj Finance 2025: 4:1 bonus (5x) + split of face value 2 -> 1 (2x) = 10x shares.
+    ys = []
+    for i in range(6):
+        row = year(2026 - i, 100 * 1.15 ** (5 - i), 10 * 1.15 ** (5 - i), 1000 if i == 0 else 100)
+        income = {**row.income, "face_value": 1.0 if i == 0 else 2.0}
+        ys.append(YearRow(row.fy_end, income, "annual", row.balance, row.shares, True))
     ctx = build_context(fundamentals(ys), load_market_inputs(), prices())
     assert ctx.growth == pytest.approx(0.15, abs=1e-6)
 
@@ -83,7 +84,7 @@ def test_merger_ratio_is_dilution_not_bonus() -> None:
     from eqr.fundamentals import share_action_factors
 
     ys = [year(2026 - i, 100, 10, 136 if i < 2 else 100) for i in range(4)]
-    assert all(v == 1.0 for v in share_action_factors(tuple(ys)).values())
+    assert all(v == 1.0 for v in share_action_factors(tuple(ys))[0].values())
 
 
 def test_split_from_face_value_plus_small_merger() -> None:
@@ -98,10 +99,10 @@ def test_split_from_face_value_plus_small_merger() -> None:
             "face_value": face,
             "eps_basic": 10.0 / shares,
         }
-        return YearRow(date(fy, 3, 31), income, "annual", {})
+        return YearRow(date(fy, 3, 31), income, "annual", {}, shares, True)
 
     ys = (row(2024, 1247, 1.0), row(2022, 122.1, 10.0))
-    assert share_action_factors(ys)[date(2022, 3, 31)] == pytest.approx(10.0)
+    assert share_action_factors(ys)[0][date(2022, 3, 31)] == pytest.approx(10.0)
 
 
 def test_zero_owners_profit_with_real_profit_is_missing() -> None:
@@ -110,3 +111,47 @@ def test_zero_owners_profit_with_real_profit_is_missing() -> None:
     assert owners_profit({"pat": 4420.0, "pat_owners": 0.0}) == 4420.0
     assert owners_profit({"pat": 0.0, "pat_owners": 0.0}) == 0.0
     assert owners_profit({"pat": 100.0, "pat_owners": 95.0}) == 95.0
+
+
+def test_rights_issue_at_round_ratio_is_not_a_bonus() -> None:
+    # Shares double AND equity doubles (money came in): real issuance, per-share growth ~0.
+    ys = [
+        year(
+            2026 - i,
+            200 if i < 3 else 100,
+            20 if i < 3 else 10,
+            200 if i < 3 else 100,
+            equity=2000 if i < 3 else 1000,
+        )
+        for i in range(6)
+    ]
+    ctx = build_context(fundamentals(ys), load_market_inputs(), prices())
+    assert ctx.growth == pytest.approx(0.0, abs=1e-6)
+    assert any("could not confirm a bonus" in n for n in ctx.notes)
+
+
+def test_one_for_five_bonus_recognised() -> None:
+    ys = [
+        year(2026 - i, 100 * 1.10 ** (5 - i), 10 * 1.10 ** (5 - i), 120 if i < 2 else 100)
+        for i in range(6)
+    ]
+    ctx = build_context(fundamentals(ys), load_market_inputs(), prices())
+    assert ctx.growth == pytest.approx(0.10, abs=1e-6)
+
+
+def test_missing_year_uses_actual_span() -> None:
+    ys = [
+        year(2026 - i, 100 * 1.10 ** (6 - i), 10 * 1.10 ** (6 - i), 100) for i in range(7) if i != 3
+    ]
+    ctx = build_context(fundamentals(ys), load_market_inputs(), prices())
+    assert ctx.growth == pytest.approx(0.10, abs=1e-6)
+
+
+def test_bonus_with_option_creep_recognised() -> None:
+    # HDFC Bank FY26: 1:1 bonus plus ~0.6% employee stock options = 2.012x shares.
+    ys = [
+        year(2026 - i, 100 * 1.10 ** (5 - i), 10 * 1.10 ** (5 - i), 201.2 if i == 0 else 100)
+        for i in range(6)
+    ]
+    ctx = build_context(fundamentals(ys), load_market_inputs(), prices())
+    assert ctx.growth == pytest.approx(0.10 * 1 + 0.0, abs=0.002)

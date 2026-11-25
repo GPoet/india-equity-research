@@ -42,7 +42,7 @@ def maintenance_capex(cur: YearRow, prev: YearRow | None) -> tuple[float | None,
     cx = capex(cur.income)
     if cx is None:
         return None, "capex unknown"
-    if prev is not None:
+    if prev is not None and cur.fy_end.year - prev.fy_end.year == 1:
         ppe_now, ppe_then = cur.balance.get("ppe"), prev.balance.get("ppe")
         rev_now, rev_then = cur.income.get("revenue"), prev.income.get("revenue")
         if (

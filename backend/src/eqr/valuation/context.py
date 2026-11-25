@@ -13,7 +13,7 @@ from eqr.fundamentals import (
     YearRow,
     owners_profit,
     share_action_factors,
-    shares_from,
+    year_shares,
 )
 from eqr.market import MarketInputs
 from eqr.valuation.formulas import cagr
@@ -57,10 +57,18 @@ class ValuationContext:
     growth: float | None  # expected growth used by the lenses
     growth_inputs: dict[str, float | None]
     notes: tuple[str, ...] = field(default_factory=tuple)
+    # fiscal year end -> bonus/split multiple since then (shares then x factor = today's units)
+    share_factors: dict[date, float] = field(default_factory=dict)
 
     @property
     def years(self) -> tuple[YearRow, ...]:
         return self.f.years
+
+    def adjusted_shares(self, y: YearRow) -> float | None:
+        """That year's share count in today's units (after later bonuses/splits), so it can
+        be paired with Yahoo's adjusted prices and dividends. Real issuance stays visible."""
+        shares = year_shares(y)
+        return shares * self.share_factors.get(y.fy_end, 1.0) if shares else None
 
     def annual(self, key: str, n: int) -> list[float | None]:
         return [y.income.get(key) for y in self.f.years[:n]]
@@ -98,11 +106,12 @@ def _debt(f: Fundamentals, notes: list[str]) -> float | None:
     return None
 
 
-def _cash_like(b: Metrics, notes: list[str]) -> float | None:
+def cash_like(b: Metrics) -> float | None:
+    """Cash + other bank balances + current investments. Ind-AS balance sheets omit a line
+    that is nil, so the two optional lines count as zero when absent; cash itself is required."""
     cash = b.get("cash")
     if cash is None:
         return None
-    # Bank balances and current investments are optional line items: absent means nil.
     extras = [b.get("bank_balances"), b.get("current_investments")]
     return cash + sum(x for x in extras if x is not None)
 
@@ -118,7 +127,7 @@ def _per_share(y: YearRow, key: str, factors: dict[date, float], is_bank: bool) 
         if key == "profit"
         else y.income.get("total_income" if is_bank else "revenue")
     )
-    shares, _ = shares_from(y.income)
+    shares = year_shares(y)
     if value is None or not shares:
         return None
     return value / (shares * factors.get(y.fy_end, 1.0))
@@ -135,16 +144,21 @@ def _growth(
         return None, {}
     n = min(GROWTH_YEARS, len(years) - 1)
     first, last = years[n], years[0]
+    span = last.fy_end.year - first.fy_end.year  # actual years elapsed, even if a row is missing
     rev = cagr(
         _per_share(first, "revenue", factors, f.is_bank),
         _per_share(last, "revenue", factors, f.is_bank),
-        n,
+        span,
     )
     pat = cagr(
         _per_share(first, "profit", factors, f.is_bank),
         _per_share(last, "profit", factors, f.is_bank),
-        n,
+        span,
     )
+    if span != n:
+        notes.append(
+            f"Growth: {span - n} fiscal year(s) missing in the window; CAGR uses {span} years"
+        )
     inputs: dict[str, float | None] = {
         f"revenue_per_share_cagr_{n}y": rev,
         f"profit_per_share_cagr_{n}y": pat,
@@ -194,7 +208,7 @@ def build_context(f: Fundamentals, m: MarketInputs, p: PriceData) -> ValuationCo
     equity = b.get("equity_owners")
     tax = _tax_rate(f, m.default_tax_rate, notes)
     debt = _debt(f, notes)
-    cash = _cash_like(b, notes)
+    cash = cash_like(b)
     mcap = p.price * shares if shares else None
     ke = m.cost_of_equity(p.beta)
     kd = _cost_of_debt(f, debt, m)
@@ -206,8 +220,13 @@ def build_context(f: Fundamentals, m: MarketInputs, p: PriceData) -> ValuationCo
         wacc = (mcap * ke + debt * kd * (1 - tax)) / (mcap + debt)
     if not f.shares_note.startswith("paid-up capital / face value (matches"):
         notes.append(f"Shares: {f.shares_note}")
-    factors = {**share_action_factors(f.years), **p.split_factor_by_fy}
+    detected, action_notes = share_action_factors(f.years)
+    notes.extend(action_notes)
+    factors = {**detected, **p.split_factor_by_fy}
     growth, growth_inputs = _growth(f, factors, notes)
+    minority = b.get("minority_interest")
+    if minority is None and f.consolidated and b:
+        notes.append("Minority interest not reported in the balance sheet; treated as none")
     return ValuationContext(
         f=f,
         m=m,
@@ -220,7 +239,7 @@ def build_context(f: Fundamentals, m: MarketInputs, p: PriceData) -> ValuationCo
         equity=equity,
         debt=debt,
         cash_like=cash,
-        minority=b.get("minority_interest") or 0.0,
+        minority=minority or 0.0,
         tax_rate=tax,
         cost_of_equity=ke,
         cost_of_debt=kd,
@@ -228,4 +247,5 @@ def build_context(f: Fundamentals, m: MarketInputs, p: PriceData) -> ValuationCo
         growth=growth,
         growth_inputs=growth_inputs,
         notes=tuple(notes),
+        share_factors=factors,
     )

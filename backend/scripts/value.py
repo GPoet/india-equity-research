@@ -34,7 +34,7 @@ def print_report(r: ValuationReport) -> None:
     b, a = r.result, r.assumptions
     print(f"\n=== {r.symbol} ({r.company_type}, {a['basis']}) ===")
     print(
-        f"Price {r.price:,.2f} ({r.price_as_of[:16]})   Market cap {fmt((a['market_cap'] or 0) / CRORE)} cr"
+        f"Price {r.price:,.2f} ({r.price_as_of[:16]})   Market cap {fmt(a['market_cap'] / CRORE if a['market_cap'] else None)} cr"
     )
     print(
         f"Fair value {fmt(b.low)} / {fmt(b.mid)} / {fmt(b.high)} (low/mid/high)   "

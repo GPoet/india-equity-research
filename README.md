@@ -4,7 +4,7 @@ Paste a link, company name or ticker; get financials, valuation, news, sentiment
 
 ## Status
 
-Phase 0-1 (data layer) in progress. Dashboard, valuation engine and research agent not built yet.
+Phases 0-2 done: data layer and valuation engine. Research agent, sentiment, sector view and dashboard not built yet. Formulas: [docs/FORMULAS.md](docs/FORMULAS.md).
 
 ## Backend
 
@@ -13,6 +13,7 @@ cd backend
 uv sync
 uv run pytest -q                          # offline tests against saved NSE fixtures
 uv run python scripts/coverage_spike.py   # live check: data coverage for 10 stocks (hits NSE, ~1 req/s)
+uv run python scripts/value.py TCS "HDFC Bank"  # full valuation report; JSON in data/reports/
 ```
 
 Modules (`backend/src/eqr/`):
@@ -27,5 +28,8 @@ Modules (`backend/src/eqr/`):
 | `sources/bhavcopy.py` | Official end-of-day prices |
 | `sources/prices.py` | Delayed intraday quote and adjusted history via yfinance |
 | `sources/universe.py` | Daily refresh of the NSE equity list |
+| `fundamentals.py` | Fiscal-year rows, TTM, share count checks, bonus/split detection |
+| `market.py` | Rates and risk premium from `config/market_inputs.toml` |
+| `valuation/` | Investor formulas, quality scores, blend into fair value and signal |
 
 Local data and cache live in `backend/data/` (git-ignored).

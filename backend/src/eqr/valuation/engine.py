@@ -24,6 +24,14 @@ log = logging.getLogger(__name__)
 INDEX = "^NSEI"  # Nifty 50
 BETA_PERIOD = "2y"
 DEFAULT_BETA = 1.0
+BETA_RANGE = (0.5, 2.0)  # outside this, a 2-year beta is noise (thin trading, one-off moves)
+# Context notes that mean the inputs themselves are shaky; each lowers confidence.
+DATA_WARNING_MARKERS = (
+    "mis-tagged",
+    "could not confirm a bonus",
+    "missing in the window",
+    "Market inputs are",
+)
 
 
 def _blume(beta: float) -> float:
@@ -43,7 +51,10 @@ def estimate_beta(symbol: str) -> tuple[float, str]:
         if len(joined) < 50:
             return DEFAULT_BETA, f"default {DEFAULT_BETA} (only {len(joined)} weekly returns)"
         raw = joined.iloc[:, 0].cov(joined.iloc[:, 1]) / joined.iloc[:, 1].var()
-        return _blume(raw), f"2y weekly vs Nifty 50, raw {raw:.2f}, Blume-adjusted"
+        adjusted = _blume(raw)
+        bounded = min(max(adjusted, BETA_RANGE[0]), BETA_RANGE[1])
+        note = "" if bounded == adjusted else f", capped from {adjusted:.2f}"
+        return bounded, f"2y weekly vs Nifty 50, raw {raw:.2f}, Blume-adjusted{note}"
     except Exception as exc:  # network / Yahoo errors: fall back, but say so
         log.warning("Beta for %s failed: %s", symbol, exc)
         return DEFAULT_BETA, f"default {DEFAULT_BETA} (beta download failed: {type(exc).__name__})"
@@ -64,8 +75,9 @@ def fetch_price_data(symbol: str, fy_ends: list[date], today: date) -> PriceData
         before = closes[[d <= fy for d in closes.index]]
         if not before.empty and (fy - before.index[-1]).days <= 10:
             fy_prices[fy] = float(before.iloc[-1])
-    # Bonus/split factors come from the filings (fundamentals.share_action_factors):
-    # Yahoo's split list misses Indian bonus issues. Its price history is adjusted.
+    # Bonus/split factors come from the filings (fundamentals.share_action_factors) because
+    # Yahoo's split *list* misses Indian bonus issues. Its price and dividend *history* is
+    # adjusted for them (checked on Bajaj Finance's 2025 bonus + split), so it is used as is.
     ticker = yf.Ticker(yahoo_symbol(symbol))
     try:
         divs = ticker.dividends
@@ -119,9 +131,17 @@ class ValuationReport:
 def _run(lens: Any, ctx: ValuationContext) -> LensResult:
     try:
         return lens(ctx)
-    except (ValueError, ZeroDivisionError, OverflowError) as exc:  # bad data, not a crash
+    except (ValueError, ZeroDivisionError, OverflowError, TypeError) as exc:  # bad data
         name = getattr(lens, "__name__", "lens")
-        return LensResult(name, name, "", "value", False, reason=f"{type(exc).__name__}: {exc}")
+        log.warning("Lens %s failed: %s", name, exc)
+        return LensResult(
+            name,
+            name.replace("_", " "),
+            "",
+            "value",
+            False,
+            reason=f"Failed on this company's data: {type(exc).__name__}: {exc}",
+        )
 
 
 def value_company(
@@ -130,8 +150,13 @@ def value_company(
     ctx = build_context(f, market, prices)
     lenses = tuple(_run(lens, ctx) for lens in (*VALUE_LENSES, *QUALITY_LENSES))
     implied = _run(reverse_residual_income if f.is_financial else reverse_dcf, ctx)
-    result = blend(list(lenses), prices.price, f.is_financial, market.margin_of_safety)
     warnings = [w for w in (market.staleness_warning(today),) if w]
+    data_warnings = sum(
+        any(marker in note for marker in DATA_WARNING_MARKERS) for note in (*ctx.notes, *warnings)
+    )
+    result = blend(
+        list(lenses), prices.price, f.is_financial, market.margin_of_safety, data_warnings
+    )
     if f.is_bank:
         warnings.append(
             "Bank asset-quality ratios (GNPA/NNPA/CET1) come from the standalone filing: not loaded yet"

@@ -184,6 +184,14 @@ Roughly 8-9 weeks for one developer. Phases 4 and 5 can run alongside 3.
 
 Coverage on 10 test stocks (private bank, NBFC, IT, FMCG, PSU, metal, pharma, holdco, small cap, Oct 2025 IPO): all 10 resolve, all 10 have quarterly results from 2018 (IPO from listing), all 10 have prices from both sources. Banks file a separate banking taxonomy (NII, PPOP, provisions, advances, deposits, GNPA %, CET1); consolidated bank filings leave the ratios blank (tagged 0.0), so those come from the standalone filing. Quarterly history goes back to 2018 only; 10-year annual history needs another source (Screener export or annual-report XBRL) - next.
 
+## 12b. Phase 2 status (25 Nov 2026)
+
+Valuation engine built (`backend/src/eqr/valuation/`, formulas in `docs/FORMULAS.md`). 13 value formulas and 9 quality/safety checks, sector-aware blend, reverse DCF and implied ROE, confidence with red flags. Run: `uv run python scripts/value.py TCS "HDFC Bank"`. Two independent code reviews done, findings fixed.
+
+Observation from the 10 test stocks: on CAPM costs of equity (10.5-14.5%) with conservative growth, the classic formulas call most Indian large caps fairly valued or overvalued. The reverse DCF / implied ROE line shows the gap (HUL priced for 23% FCF growth vs 6.5% history; HDFC Bank for 27% ROE vs 14%). Whether the signal predicts anything is for the Phase 7 backtest.
+
+Next: Phase 3 (Claude research agent: news, regulation, catalysts), standalone bank asset-quality ratios, holding-company sum-of-the-parts.
+
 ## 13. Open decisions
 
 1. Prices: DECIDED 25 Nov 2026: yfinance (free, delayed). Kite Connect stays available as a drop-in adapter later.

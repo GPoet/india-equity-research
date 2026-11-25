@@ -6,7 +6,7 @@ lenders; the classic investor formulas carry smaller weights as cross-checks.
 
 from __future__ import annotations
 
-import statistics
+import math
 from dataclasses import dataclass, field
 
 from eqr.valuation.models import LensResult
@@ -56,32 +56,45 @@ class Blend:
     red_flags: tuple[str, ...] = ()
 
 
-def _percentile(values: list[float], q: float) -> float:
-    ordered = sorted(values)
-    pos = (len(ordered) - 1) * q
-    lo, hi = int(pos), min(int(pos) + 1, len(ordered) - 1)
-    return ordered[lo] + (ordered[hi] - ordered[lo]) * (pos - lo)
+def _weighted_percentile(pairs: list[tuple[float, float]], q: float) -> float:
+    """Percentile of values where each value counts by its weight (pairs of value, weight)."""
+    ordered = sorted(pairs)
+    total = sum(w for _, w in ordered)
+    running = 0.0
+    for value, weight in ordered:
+        running += weight
+        if running >= q * total:
+            return value
+    return ordered[-1][0]
 
 
 def blend(
-    lenses: list[LensResult], price: float, financial: bool, margin_of_safety: float
+    lenses: list[LensResult],
+    price: float,
+    financial: bool,
+    margin_of_safety: float,
+    data_warnings: int = 0,
 ) -> Blend:
     weights = WEIGHTS_FINANCIAL if financial else WEIGHTS_OPERATING
     core = CORE_FINANCIAL if financial else CORE_OPERATING
-    values = {
+    raw = {
         r.key: r.value
         for r in lenses
         if r.applicable
         and r.kind == "value"
         and r.key in weights
         and r.value is not None
-        and r.value > 0
+        and math.isfinite(r.value)
     }
+    # A negative value (e.g. net debt above enterprise value) is a real answer: the model
+    # says the equity is worth nothing. Keep it as zero and flag it; never drop it silently.
+    negative = sorted(k for k, val in raw.items() if val < 0)
+    values = {k: max(val, 0.0) for k, val in raw.items()}
     flags = tuple(
         f"{r.name}: {r.verdict}"
         for r in lenses
         if r.applicable and r.verdict in RED_FLAG_VERDICTS.get(r.key, set())
-    )
+    ) + tuple(f"{k} gives a negative equity value" for k in negative)
     if len(values) < MIN_LENSES:
         return Blend(
             None,
@@ -98,11 +111,20 @@ def blend(
     total = sum(weights[k] for k in values)
     used = {k: weights[k] / total for k in values}
     mid = sum(values[k] * w for k, w in used.items())
-    vals = list(values.values())
-    low = min(_percentile(vals, 0.25), mid)
-    high = max(_percentile(vals, 0.75), mid)
+    pairs = [(values[k], used[k]) for k in values]
+    low = min(_weighted_percentile(pairs, 0.25), mid)
+    high = max(_weighted_percentile(pairs, 0.75), mid)
+    buy_below = mid * (1 - margin_of_safety)
+    sell_above = mid * (1 + margin_of_safety)
 
-    signal = "Undervalued" if price < low else "Overvalued" if price > high else "Fairly valued"
+    # Outside the range AND past the margin of safety, so agreeing models and small price
+    # moves cannot flip the signal.
+    if price < min(low, buy_below):
+        signal = "Undervalued"
+    elif price > max(high, sell_above):
+        signal = "Overvalued"
+    else:
+        signal = "Fairly valued"
 
     reasons: list[str] = []
     score = 3
@@ -113,7 +135,7 @@ def blend(
             f"Only {len(core_used)} of the core models ({', '.join(sorted(core))}) could run"
         )
     spread = (high - low) / mid if mid else 0
-    if spread > DISAGREEMENT:
+    if spread > DISAGREEMENT or not mid:
         score -= 1
         reasons.append(f"Models disagree: range is {spread:.0%} of the mid value")
     if len(values) < 5:
@@ -122,16 +144,16 @@ def blend(
     if flags:
         score -= 1
         reasons.append("Red flags present")
-    if statistics.pstdev(vals) / statistics.mean(vals) > 0.75:
+    if data_warnings:
         score -= 1
-        reasons.append("Lens values are widely scattered")
+        reasons.append(f"{data_warnings} data-quality warning(s)")
     confidence = "high" if score >= 3 else "medium" if score == 2 else "low"
 
     return Blend(
         low=low,
         mid=mid,
         high=high,
-        buy_below=mid * (1 - margin_of_safety),
+        buy_below=buy_below,
         signal=signal,
         confidence=confidence,
         upside=mid / price - 1 if price else None,
