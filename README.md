@@ -23,6 +23,8 @@ Run the history test (first run downloads every Nifty 50 company's filings, so i
 cd backend && uv run python scripts/backtest.py
 ```
 
+The API runs a daily scan of the Nifty 500 by itself (when NSE publishes a new trading day; checked every 30 minutes and on startup). It only runs while the API is running. Results: `backend/data/scan/latest.json`, one file per day in `backend/data/scan/history/`.
+
 Open http://localhost:3000, type a company name or ticker, or paste a Screener, Moneycontrol, Tickertape, Groww, BSE, NSE or Yahoo link. Research runs on your local Claude Code login.
 
 ## Backend
