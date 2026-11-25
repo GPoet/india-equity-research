@@ -8,6 +8,7 @@ import { OwnershipPanel } from "@/components/OwnershipPanel";
 import { QualityList } from "@/components/QualityList";
 import { ResearchPanel } from "@/components/ResearchPanel";
 import { SectorPanel } from "@/components/SectorPanel";
+import { SentimentPanel } from "@/components/SentimentPanel";
 import { ScaleKey, ValueScale } from "@/components/ValueScale";
 import { api, ApiError, type Company } from "@/lib/api";
 import { crore, num, pct, rupees } from "@/lib/format";
@@ -121,6 +122,7 @@ export function CompanyView({ symbol }: { symbol: string }) {
         <aside>
           <SectorPanel symbol={company.symbol} />
           <OwnershipPanel lens={v.lenses.find((l) => l.key === "promoter")} />
+          <SentimentPanel symbol={company.symbol} />
         </aside>
       </div>
     </article>

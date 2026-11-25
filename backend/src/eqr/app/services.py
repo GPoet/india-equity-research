@@ -15,9 +15,13 @@ import yfinance as yf
 
 from eqr.fundamentals import Fundamentals, owners_profit
 from eqr.journal import HORIZONS, score_entry, summarise
+from eqr.llm.xai import DEFAULT_MODEL, SpendLedger, XaiClient, XaiError
 from eqr.pipeline import Context, announcements, research, valuation
+from eqr.research.store import ResearchStore
 from eqr.sectors.catalog import sector_for_industry
 from eqr.sectors.view import build_stats, sector_picture
+from eqr.sentiment.agent import run_sentiment
+from eqr.settings import load_env
 from eqr.sources.prices import history
 from eqr.valuation import ENGINE_VERSION
 from eqr.valuation.engine import _dated
@@ -28,6 +32,8 @@ VALUATION_TTL = 15 * 60
 SECTOR_TTL = 6 * 3600
 INDEX_DAYS = 400
 JOURNAL_PRICE_TTL = 6 * 3600
+SENTIMENT_HOURS = 6
+DEFAULT_XAI_BUDGET = 10.0
 
 
 FAILURE_TTL = 45  # a failed lookup is remembered briefly so waiters don't each retry it
@@ -103,6 +109,9 @@ class LiveServices:
     def __init__(self, ctx: Context | None = None) -> None:
         self.ctx = ctx or Context()
         self._memo = _Memo()
+        self._sentiment_store = ResearchStore(
+            self.ctx.data_dir / "sentiment", max_age_hours=SENTIMENT_HOURS
+        )
 
     def resolve(self, q: str) -> dict[str, Any]:
         res = self.ctx.resolver.resolve(q)
@@ -212,6 +221,45 @@ class LiveServices:
         if not path.exists():
             return None
         return json.loads(path.read_text())
+
+    def _xai(self) -> XaiClient | None:
+        env = load_env(keys=("XAI_API_KEY", "XAI_MONTHLY_BUDGET_USD", "XAI_MODEL"))
+        key = env.get("XAI_API_KEY")
+        if not key:
+            return None
+        try:
+            budget = float(env.get("XAI_MONTHLY_BUDGET_USD", DEFAULT_XAI_BUDGET))
+        except ValueError:
+            budget = DEFAULT_XAI_BUDGET
+        return XaiClient(
+            key,
+            SpendLedger(self.ctx.data_dir / "xai_spend.sqlite"),
+            budget,
+            model=env.get("XAI_MODEL", DEFAULT_MODEL),
+        )
+
+    def sentiment_enabled(self) -> bool:
+        return bool(load_env(keys=("XAI_API_KEY",)).get("XAI_API_KEY"))
+
+    def run_sentiment(self, symbol: str, kind: str = "x") -> dict[str, Any]:
+        client = self._xai()
+        if client is None:
+            raise XaiError("no_key", "No xAI API key: add XAI_API_KEY to backend/.env")
+        sec = self.ctx.resolver.by_symbol(symbol)
+        run = run_sentiment(
+            client, sec.name if sec else symbol, symbol, self._industry(symbol), date.today()
+        )
+        data = {
+            "symbol": symbol,
+            "report": run.report.model_dump(),
+            "dropped": run.dropped,
+            "meta": {**run.meta, "month_spend_usd": client.month_spend()},
+        }
+        self._sentiment_store.save(symbol, kind, data)
+        return data
+
+    def cached_sentiment(self, symbol: str, kind: str = "x") -> dict[str, Any] | None:
+        return self._sentiment_store.load(symbol, kind)
 
     def run_research(self, symbol: str, model: str) -> dict[str, Any]:
         sec = self.ctx.resolver.by_symbol(symbol)

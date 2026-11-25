@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import threading
+from collections.abc import Callable
 from concurrent.futures import CancelledError, Future, ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from typing import Any, Protocol
@@ -22,6 +23,7 @@ from fastapi.responses import JSONResponse
 
 from eqr.app.serialize import clean
 from eqr.llm.claude_cli import LlmError
+from eqr.llm.xai import XaiError
 from eqr.nse_client import NseError
 from eqr.sources.prices import PriceError
 
@@ -43,14 +45,24 @@ class Services(Protocol):
     def cached_research(self, symbol: str, model: str) -> dict[str, Any] | None: ...
     def journal(self) -> dict[str, Any]: ...
     def backtest(self) -> dict[str, Any] | None: ...
+    def sentiment_enabled(self) -> bool: ...
+    def run_sentiment(self, symbol: str, kind: str) -> dict[str, Any]: ...
+    def cached_sentiment(self, symbol: str, kind: str) -> dict[str, Any] | None: ...
 
 
-class ResearchJobs:
-    """One research run at a time (it uses the user's Claude plan)."""
+class Jobs:
+    """Background runs (research on the Claude plan, sentiment on the xAI budget), one at a
+    time per kind, with results cached by the services."""
 
-    def __init__(self, services: Services) -> None:
-        self._services = services
-        self._pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="research")
+    def __init__(
+        self,
+        run: Callable[[str, str], dict[str, Any]],
+        cached: Callable[[str, str], dict[str, Any] | None],
+        name: str,
+        errors: tuple[type[Exception], ...],
+    ) -> None:
+        self._run_fn, self._cached_fn, self._name, self._errors = run, cached, name, errors
+        self._pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix=name)
         self._jobs: dict[tuple[str, str], Future] = {}
         self._running: set[tuple[str, str]] = set()
         self._lock = threading.Lock()
@@ -59,14 +71,14 @@ class ResearchJobs:
         with self._lock:
             self._running.add(key)
         try:
-            return self._services.run_research(*key)
+            return self._run_fn(*key)
         finally:
             with self._lock:
                 self._running.discard(key)
 
     def start(self, symbol: str, model: str, force: bool) -> dict[str, Any]:
         key = (symbol, model)
-        if not force and (cached := self._services.cached_research(symbol, model)):
+        if not force and (cached := self._cached_fn(symbol, model)):
             with self._lock:
                 job = self._jobs.get(key)
             if job is None or job.done():
@@ -83,7 +95,7 @@ class ResearchJobs:
             job = self._jobs.get(key)
             running = key in self._running
         if job is None:
-            cached = self._services.cached_research(symbol, model)
+            cached = self._cached_fn(symbol, model)
             return (
                 {"status": "done", "data": cached, "cached": True} if cached else {"status": "none"}
             )
@@ -94,14 +106,14 @@ class ResearchJobs:
         except CancelledError:
             return {
                 "status": "failed",
-                "error": "Research was cancelled (server shutting down)",
+                "error": f"{self._name.capitalize()} was cancelled (server shutting down)",
                 "kind": "cancelled",
             }
         if exc is None:
             return {"status": "done", "data": job.result()}
-        if isinstance(exc, LlmError):
-            return {"status": "failed", "error": str(exc), "kind": exc.kind}
-        log.error("Research failed for %s", symbol, exc_info=exc)
+        if isinstance(exc, self._errors):
+            return {"status": "failed", "error": str(exc), "kind": getattr(exc, "kind", "error")}
+        log.error("%s failed for %s", self._name, symbol, exc_info=exc)
         return {"status": "failed", "error": _plain(exc), "kind": "internal"}
 
     def shutdown(self) -> None:
@@ -127,12 +139,16 @@ def _check_same_site(request: Request) -> None:
 
 
 def create_app(services: Services) -> FastAPI:
-    jobs = ResearchJobs(services)
+    jobs = Jobs(services.run_research, services.cached_research, "research", (LlmError,))
+    sentiment_jobs = Jobs(
+        services.run_sentiment, services.cached_sentiment, "sentiment", (XaiError,)
+    )
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
         yield
         jobs.shutdown()
+        sentiment_jobs.shutdown()
 
     app = FastAPI(title="India Equity Research", version="0.2", lifespan=lifespan)
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=list(ALLOWED_HOSTS))
@@ -213,6 +229,27 @@ def create_app(services: Services) -> FastAPI:
                 404, "No backtest has been run yet: uv run python scripts/backtest.py"
             )
         return clean(result)
+
+    @app.get("/api/company/{symbol}/sentiment")
+    def sentiment_status(symbol: str) -> dict[str, Any]:
+        sym = require(symbol)
+        if not services.sentiment_enabled():
+            return {
+                "status": "disabled",
+                "error": "Add XAI_API_KEY to backend/.env to turn on X sentiment",
+            }
+        return clean(sentiment_jobs.status(sym, "x"))
+
+    @app.post("/api/company/{symbol}/sentiment")
+    def sentiment_start(request: Request, symbol: str, force: bool = False) -> dict[str, Any]:
+        _check_same_site(request)
+        sym = require(symbol)
+        if not services.sentiment_enabled():
+            return {
+                "status": "disabled",
+                "error": "Add XAI_API_KEY to backend/.env to turn on X sentiment",
+            }
+        return clean(sentiment_jobs.start(sym, "x", force))
 
     @app.get("/api/company/{symbol}/research")
     def research_status(symbol: str, model: str = "sonnet") -> dict[str, Any]:

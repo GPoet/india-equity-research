@@ -14,6 +14,8 @@ function signalTone(signal: string): string {
 }
 
 function SummaryTable({ rows, horizons }: { rows: SignalSummary[]; horizons: string[] }) {
+  const shown = rows.filter((r) => horizons.includes(r.horizon) && (r.n > 0 || r.pending > 0));
+  if (shown.length === 0) return <p className="muted">No calls scored yet.</p>;
   return (
     <div className="table-scroll">
       <table>
@@ -28,9 +30,7 @@ function SummaryTable({ rows, horizons }: { rows: SignalSummary[]; horizons: str
           </tr>
         </thead>
         <tbody>
-          {rows
-            .filter((r) => horizons.includes(r.horizon))
-            .map((r) => (
+          {shown.map((r) => (
               <tr key={r.signal + r.horizon}>
                 <td><span className={`tag ${signalTone(r.signal)}`}>{r.signal}</span></td>
                 <td>{HORIZON_LABEL[r.horizon]}</td>

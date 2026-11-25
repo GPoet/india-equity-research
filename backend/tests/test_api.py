@@ -13,6 +13,7 @@ class FakeServices:
         self.research_calls = 0
         self.cached = None
         self.fail_company = False
+        self.xai_on = False
 
     def resolve(self, q):
         if q.lower() in ("tcs", "tata consultancy"):
@@ -59,6 +60,15 @@ class FakeServices:
         return {"as_of": "2026-11-25", "entries": [], "summary": [], "engine_version": "x"}
 
     def backtest(self):
+        return None
+
+    def sentiment_enabled(self):
+        return self.xai_on
+
+    def run_sentiment(self, symbol, kind):
+        return {"symbol": symbol, "report": {"overall": "neutral"}}
+
+    def cached_sentiment(self, symbol, kind):
         return None
 
 
@@ -176,3 +186,17 @@ def test_backtest_missing_is_404_with_instructions(client) -> None:
     r = client.get("/api/backtest")
     assert r.status_code == 404
     assert "scripts/backtest.py" in r.json()["detail"]
+
+
+def test_sentiment_disabled_without_key(client) -> None:
+    r = client.get("/api/company/TCS/sentiment").json()
+    assert r["status"] == "disabled" and "XAI_API_KEY" in r["error"]
+    r = client.post("/api/company/TCS/sentiment", headers=H).json()
+    assert r["status"] == "disabled"
+
+
+def test_sentiment_runs_when_enabled(client) -> None:
+    client.fake.xai_on = True
+    assert client.post("/api/company/TCS/sentiment").status_code == 403  # same CSRF guard
+    started = client.post("/api/company/TCS/sentiment", headers=H).json()
+    assert started["status"] in ("queued", "running", "done")

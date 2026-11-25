@@ -185,6 +185,30 @@ export type Backtest = {
   };
 };
 
+export type Sentiment = {
+  symbol: string;
+  report: {
+    overall: "bullish" | "neutral" | "bearish" | "mixed";
+    score: number;
+    summary: string;
+    volume: string;
+    volume_note: string;
+    themes: { theme: string; stance: string; detail: string; post_urls: string[] }[];
+    notable_posts: { url: string; author: string; author_type: string; stance: string; summary: string }[];
+    pump_risk: { level: "low" | "medium" | "high"; signals: string[] };
+    data_gaps: string[];
+  };
+  meta: { as_of: string; posts_fetched: number; cost_usd: number; month_spend_usd?: number; window_days: number };
+};
+
+export type SentimentState =
+  | { status: "disabled"; error: string }
+  | { status: "none" }
+  | { status: "queued" }
+  | { status: "running" }
+  | { status: "done"; data: Sentiment; cached?: boolean }
+  | { status: "failed"; error: string; kind: string };
+
 export class ApiError extends Error {
   constructor(public status: number, message: string) {
     super(message);
@@ -218,6 +242,12 @@ export const api = {
     call<{ points: { date: string; close: number }[] }>(`/api/company/${encodeURIComponent(s)}/prices?period=${period}`),
   sector: (s: string) => call<SectorPicture>(`/api/company/${encodeURIComponent(s)}/sector`),
   sectors: () => call<{ as_of: string; sectors: SectorStat[] }>(`/api/sectors`),
+  sentiment: (s: string) => call<SentimentState>(`/api/company/${encodeURIComponent(s)}/sentiment`),
+  startSentiment: (s: string, force = false) =>
+    call<SentimentState>(`/api/company/${encodeURIComponent(s)}/sentiment${force ? "?force=true" : ""}`, {
+      method: "POST",
+      headers: { "X-Equity-Desk": "1" },
+    }),
   journal: () => call<Journal>(`/api/journal`),
   backtest: () => call<Backtest>(`/api/backtest`),
   research: (s: string) => call<ResearchState>(`/api/company/${encodeURIComponent(s)}/research`),
