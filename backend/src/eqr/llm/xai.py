@@ -30,6 +30,9 @@ PRICE_OUTPUT = 6.00 / 1e6
 PRICE_POST = 5.00 / 1000
 PRICE_PROFILE = 10.00 / 1000
 MAX_TURNS = 4
+# Charged when a call's real cost is unknown (timeout, error after the request was sent, no
+# usage in the reply), and kept free under the budget before each call: spending fails closed.
+CALL_RESERVE_USD = 0.50
 
 
 class XaiError(RuntimeError):
@@ -67,6 +70,10 @@ class SpendLedger:
             ).fetchone()
         return float(row[0])
 
+    def close(self) -> None:
+        with self._lock:
+            self._conn.close()
+
     def add(self, usd: float, note: str) -> None:
         with self._lock:
             self._conn.execute(
@@ -81,6 +88,8 @@ def _cost(usage: dict[str, Any]) -> float:
     if isinstance(ticks, (int, float)) and ticks > 0:
         return ticks / 1e10  # xAI: 10,000,000,000 ticks per dollar
     tools = usage.get("server_side_tool_usage_details") or {}
+    if not usage.get("input_tokens") and not tools:
+        return CALL_RESERVE_USD  # no usage reported: assume the worst, not zero
     return (
         (usage.get("input_tokens") or 0) * PRICE_INPUT
         + (usage.get("output_tokens") or 0) * PRICE_OUTPUT
@@ -111,6 +120,15 @@ class XaiClient:
             transport=transport,
         )
 
+    def close(self) -> None:
+        self._http.close()
+        if self._ledger:
+            self._ledger.close()
+
+    def _charge(self, usd: float, note: str) -> None:
+        if self._ledger:
+            self._ledger.add(usd, note)
+
     def month_spend(self) -> float:
         return self._ledger.month_total(datetime.now().strftime("%Y-%m")) if self._ledger else 0.0
 
@@ -124,9 +142,11 @@ class XaiClient:
         note: str = "",
     ) -> XaiResult:
         spent = self.month_spend()
-        if spent >= self._budget:
+        if spent + CALL_RESERVE_USD > self._budget:
             raise XaiError(
-                "budget", f"Monthly xAI budget of ${self._budget:.2f} reached (${spent:.2f} spent)"
+                "budget",
+                f"Monthly xAI budget of ${self._budget:.2f} reached (${spent:.2f} spent, "
+                f"${CALL_RESERVE_USD:.2f} kept free per call)",
             )
         body = {
             "model": self._model,
@@ -151,6 +171,9 @@ class XaiClient:
         }
         try:
             resp = self._http.post("/responses", json=body)
+        except httpx.TimeoutException as exc:
+            self._charge(CALL_RESERVE_USD, f"{note} (timed out; cost unknown)")
+            raise XaiError("network", "xAI did not answer in time") from exc
         except httpx.HTTPError as exc:
             raise XaiError("network", f"Could not reach xAI: {type(exc).__name__}") from exc
         if resp.status_code in (401, 403):
@@ -160,12 +183,17 @@ class XaiClient:
         if resp.status_code == 429:
             raise XaiError("rate_limit", "xAI rate limit reached; try again shortly")
         if resp.status_code >= 400:
+            if resp.status_code >= 500:
+                self._charge(CALL_RESERVE_USD, f"{note} (HTTP {resp.status_code}; cost unknown)")
             raise XaiError("upstream", f"xAI error HTTP {resp.status_code}")
-        payload = resp.json()
+        try:
+            payload = resp.json()
+        except ValueError as exc:
+            self._charge(CALL_RESERVE_USD, f"{note} (unreadable reply; cost unknown)")
+            raise XaiError("upstream", "xAI returned something that is not JSON") from exc
         usage = payload.get("usage") or {}
         cost = _cost(usage)
-        if self._ledger:
-            self._ledger.add(cost, note)  # billed even if the output turns out unusable
+        self._charge(cost, note)  # billed even if the output turns out unusable
         message = next((o for o in payload.get("output") or [] if o.get("type") == "message"), None)
         texts = [c for c in (message or {}).get("content") or [] if c.get("type") == "output_text"]
         if not texts:

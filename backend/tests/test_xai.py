@@ -77,7 +77,7 @@ def test_request_shape_and_parsing(tmp_path: Path) -> None:
 
 def test_spend_recorded_and_budget_enforced(tmp_path: Path) -> None:
     handler = lambda req: httpx.Response(200, json=response_body('{"x": 1}'))  # noqa: E731
-    c = client(handler, tmp_path, budget=0.20)
+    c = client(handler, tmp_path, budget=0.70)
     first = c.x_search_json("p", SCHEMA, date(2026, 11, 1), date(2026, 11, 26))
     assert first.cost_usd == pytest.approx(40 * 0.005 + 1000 * 2e-6 + 500 * 6e-6)
     with pytest.raises(XaiError) as err:
@@ -113,3 +113,40 @@ def test_load_env_reads_only_listed_keys(tmp_path: Path) -> None:
     env.write_text("XAI_API_KEY=abc\n# comment\nXAI_MONTHLY_BUDGET_USD = 25\nOTHER=zzz\n")
     out = load_env(env, ("XAI_API_KEY", "XAI_MONTHLY_BUDGET_USD"))
     assert out == {"XAI_API_KEY": "abc", "XAI_MONTHLY_BUDGET_USD": "25"}
+
+
+def test_refuses_when_one_more_call_could_exceed_budget(tmp_path: Path) -> None:
+    from eqr.llm.xai import CALL_RESERVE_USD
+
+    c = client(
+        lambda req: httpx.Response(200, json=response_body('{"x": 1}')),
+        tmp_path,
+        budget=CALL_RESERVE_USD - 0.01,
+    )
+    with pytest.raises(XaiError) as err:
+        c.x_search_json("p", SCHEMA, date(2026, 11, 1), date(2026, 11, 26))
+    assert err.value.kind == "budget"
+
+
+def test_unknown_cost_is_charged_conservatively(tmp_path: Path) -> None:
+    from eqr.llm.xai import CALL_RESERVE_USD
+
+    def timeout(req):
+        raise httpx.ReadTimeout("slow", request=req)
+
+    c = client(timeout, tmp_path)
+    with pytest.raises(XaiError):
+        c.x_search_json("p", SCHEMA, date(2026, 11, 1), date(2026, 11, 26))
+    assert c.month_spend() == pytest.approx(CALL_RESERVE_USD)  # may have been billed
+
+    c2 = client(lambda req: httpx.Response(200, json={"output": []}), tmp_path / "b")
+    with pytest.raises(XaiError):
+        c2.x_search_json("p", SCHEMA, date(2026, 11, 1), date(2026, 11, 26))
+    assert c2.month_spend() == pytest.approx(CALL_RESERVE_USD)  # no usage reported
+
+
+def test_non_json_body_is_upstream_error(tmp_path: Path) -> None:
+    c = client(lambda req: httpx.Response(200, text="<html>"), tmp_path)
+    with pytest.raises(XaiError) as err:
+        c.x_search_json("p", SCHEMA, date(2026, 11, 1), date(2026, 11, 26))
+    assert err.value.kind == "upstream"

@@ -4,6 +4,7 @@ a post is kept only if its URL was among the sources Grok cited."""
 from __future__ import annotations
 
 from typing import Any, Literal
+from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -64,7 +65,12 @@ def xai_schema() -> dict[str, Any]:
 
 
 def _norm(url: str) -> str:
-    return url.strip().rstrip("/").replace("twitter.com", "x.com").replace("://www.", "://")
+    """Same post, however written: twitter.com or x.com, www or not, tracking query dropped."""
+    p = urlsplit(url.strip())
+    host = (p.hostname or "").removeprefix("www.").removeprefix("mobile.")
+    if host == "twitter.com":
+        host = "x.com"
+    return f"{host}{p.path.rstrip('/')}"
 
 
 def clean_sentiment(

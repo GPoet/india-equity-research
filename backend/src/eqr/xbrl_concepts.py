@@ -29,6 +29,7 @@ INCOME: dict[str, tuple[str, ...]] = {
         "DilutedEarningsLossPerShareFromContinuingOperations",
     ),
     "paid_up_capital": ("PaidUpValueOfEquityShareCapital",),
+    "reserves_ex_revaluation": ("ReserveExcludingRevaluationReserves",),
     "face_value": ("FaceValueOfEquityShareCapital",),
     "cfo": ("CashFlowsFromUsedInOperatingActivities",),
     "cfi": ("CashFlowsFromUsedInInvestingActivities",),
@@ -100,6 +101,7 @@ BANK_INCOME: dict[str, tuple[str, ...]] = {
     "cet1_pct": ("CET1Ratio",),
     "roa_pct": ("ReturnOnAssets",),
     "paid_up_capital": ("PaidUpValueOfEquityShareCapital",),
+    "reserves_ex_revaluation": ("ReserveExcludingRevaluationReserves",),
     "face_value": ("FaceValueOfEquityShareCapital",),
 }
 

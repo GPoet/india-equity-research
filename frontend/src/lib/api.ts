@@ -180,6 +180,9 @@ export type Backtest = {
   limitations: string[];
   summary: {
     observations: number;
+    usable?: number;
+    excluded?: Record<string, number>;
+    base_rate?: Record<string, number | null>;
     by_signal: SignalSummary[];
     upside_vs_return: Record<string, { n: number; spearman: number | null; top_quintile_excess: number | null; bottom_quintile_excess: number | null }>;
   };

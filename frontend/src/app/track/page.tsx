@@ -13,7 +13,23 @@ function signalTone(signal: string): string {
   return signal === "Undervalued" ? "good" : signal === "Overvalued" ? "bad" : "mid";
 }
 
-function SummaryTable({ rows, horizons }: { rows: SignalSummary[]; horizons: string[] }) {
+// The hit rate a coin would get: share of all calls where the stock beat (or lagged) the Nifty.
+function chance(signal: string, base: number | null | undefined): number | null {
+  if (base === null || base === undefined) return null;
+  if (signal === "Undervalued") return base;
+  if (signal === "Overvalued") return 1 - base;
+  return null;
+}
+
+function SummaryTable({
+  rows,
+  horizons,
+  baseRate,
+}: {
+  rows: SignalSummary[];
+  horizons: string[];
+  baseRate?: Record<string, number | null>;
+}) {
   const shown = rows.filter((r) => horizons.includes(r.horizon) && (r.n > 0 || r.pending > 0));
   if (shown.length === 0) return <p className="muted">No calls scored yet.</p>;
   return (
@@ -25,6 +41,7 @@ function SummaryTable({ rows, horizons }: { rows: SignalSummary[]; horizons: str
             <th>After</th>
             <th className="num">Calls scored</th>
             <th className="num">Right</th>
+            {baseRate && <th className="num">By chance</th>}
             <th className="num">Average vs Nifty</th>
             <th className="num">Median vs Nifty</th>
           </tr>
@@ -36,6 +53,7 @@ function SummaryTable({ rows, horizons }: { rows: SignalSummary[]; horizons: str
                 <td>{HORIZON_LABEL[r.horizon]}</td>
                 <td className="num">{r.n}{r.pending > 0 && <span className="muted"> (+{r.pending} pending)</span>}</td>
                 <td className="num">{pct(r.hit_rate, false, 0)}</td>
+                {baseRate && <td className="num muted">{pct(chance(r.signal, baseRate[r.horizon]), false, 0)}</td>}
                 <td className="num">{pct(r.mean_excess, true)}</td>
                 <td className="num">{pct(r.median_excess, true)}</td>
               </tr>
@@ -79,10 +97,21 @@ export default function TrackPage() {
           <>
             <p className="note">
               The valuation engine re-run every quarter from {backtest.start} to {backtest.end} on the {backtest.universe}, using only
-              filings and prices public on each date. {backtest.summary.observations} valuations from {backtest.symbols} companies,
-              engine version {backtest.engine_version}.
+              filings and prices public on each date, with prices put back on each date&apos;s share basis.{" "}
+              {backtest.summary.observations} valuations from {backtest.symbols} companies, engine version {backtest.engine_version}.
+              {backtest.summary.usable !== undefined && (
+                <>
+                  {" "}Scored: {backtest.summary.usable}. Left out:{" "}
+                  {Object.entries(backtest.summary.excluded ?? {}).map(([why, n]) => `${n} ${why}`).join(", ") || "none"}.
+                </>
+              )}
             </p>
-            <SummaryTable rows={backtest.summary.by_signal} horizons={["6m", "12m"]} />
+            <SummaryTable rows={backtest.summary.by_signal} horizons={["6m", "12m"]} baseRate={backtest.summary.base_rate} />
+            {backtest.summary.base_rate && (
+              <p className="small muted" style={{ marginTop: "0.5rem" }}>
+                By chance: how often you would be right calling every stock the same way. A signal only adds something if Right beats it.
+              </p>
+            )}
             <h3 style={{ margin: "1.5rem 0 0.5rem" }}>Bigger estimated upside, bigger return?</h3>
             <div className="table-scroll">
               <table>

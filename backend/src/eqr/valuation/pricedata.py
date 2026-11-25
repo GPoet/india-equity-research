@@ -24,6 +24,17 @@ class MarketSeries:
     dividends: pd.Series | None  # per share, indexed by ex-date; None = could not fetch
 
 
+def rebased(series: MarketSeries, factor: float) -> MarketSeries:
+    """Yahoo back-adjusts old closes and dividends for every later split or bonus, but filings
+    known on a past date report shares on that date's basis. Multiplying by factor (as-traded
+    close / adjusted close on that date) puts prices back on the as-of basis. Returns and beta
+    are unchanged by a constant factor."""
+    if factor == 1.0:
+        return series
+    divs = series.dividends * factor if series.dividends is not None else None
+    return MarketSeries(series.closes * factor, series.index_closes, divs)
+
+
 def _upto(s: pd.Series, as_of: date) -> pd.Series:
     return s[[d <= as_of for d in s.index]]
 

@@ -104,3 +104,20 @@ def test_promoter_from_master_when_xbrl_lacks_it() -> None:
     own = Ownership(latest, None, [(date(2026, 9, 30), 0.0)])
     r = promoter_and_pledge(build_context(f(), load_market_inputs(), P, ownership=own))
     assert r.verdict == "no promoter"
+
+
+def test_missing_pledge_data_is_not_clean() -> None:
+    own = Ownership(
+        sh(promoter=0.72, pledged=None),
+        None,
+        [(date(2026, 9, 30), 0.72), (date(2025, 9, 30), 0.72)],
+    )
+    r = promoter_and_pledge(build_context(f(), load_market_inputs(), P, ownership=own))
+    assert r.verdict == "pledge data not in filing"
+    assert "not in the filing" in r.summary
+
+
+def test_bank_without_cet1_is_not_strong() -> None:
+    ctx = build_context(f(True, {"gnpa_pct": 0.011, "nnpa_pct": 0.003}), load_market_inputs(), P)
+    r = bank_asset_quality(ctx)
+    assert r.verdict == "adequate" and "CET1 capital n/a" in r.summary

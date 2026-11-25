@@ -245,6 +245,17 @@ def _ttm_cash(by_end: dict[date, Filing], years: list[YearRow]) -> tuple[Metrics
     return {k: None for k in CASH_KEYS}, "none"
 
 
+def _year_sheet(sheet: Metrics, income: Metrics) -> Metrics:
+    """Older annual results (banks especially) carry no balance sheet, but do report paid-up
+    capital and reserves excluding revaluation reserves: together, owners' equity."""
+    if sheet.get("equity_owners") is not None:
+        return sheet
+    cap, res = income.get("paid_up_capital"), income.get("reserves_ex_revaluation")
+    if cap is None or res is None:
+        return sheet
+    return {**sheet, "equity_owners": cap + res}
+
+
 def _years(by_end: dict[date, Filing], quarters: list[QuarterRow]) -> list[YearRow]:
     march_sheets: dict[date, Metrics] = {}
     for filing in by_end.values():
@@ -266,7 +277,16 @@ def _years(by_end: dict[date, Filing], quarters: list[QuarterRow]) -> list[YearR
             # Summed EPS is not restated for a mid-year bonus: take shares from the last quarter.
             shares, how = shares_from(in_year[0].income)
         exact = how.startswith("paid-up capital / face value (matches")
-        years.append(YearRow(fy_end, income, source, march_sheets.get(fy_end, {}), shares, exact))
+        years.append(
+            YearRow(
+                fy_end,
+                income,
+                source,
+                _year_sheet(march_sheets.get(fy_end, {}), income),
+                shares,
+                exact,
+            )
+        )
     return years
 
 

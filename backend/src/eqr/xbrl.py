@@ -159,6 +159,10 @@ def _balance(period: Period) -> Metrics:
             out["total_debt"] += out["subordinated_liabilities"]
     else:
         out["total_debt"] = _sum_all(out["borrowings_current"], out["borrowings_noncurrent"])
+    if out.get("equity_owners") is None:
+        # Ind AS: equity attributable to owners = equity share capital + other equity. Some
+        # half-year filings tag only the parts.
+        out["equity_owners"] = _sum_all(out.get("equity_share_capital"), out.get("other_equity"))
     return out
 
 

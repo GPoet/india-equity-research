@@ -561,7 +561,9 @@ def bank_asset_quality(ctx: ValuationContext) -> LensResult:
             key, name, school, "score", "Asset-quality ratios not in the standalone filing"
         )
     weak = gnpa > 0.05 or nnpa > 0.02 or (cet1 is not None and cet1 < 0.09)
-    strong = gnpa < 0.02 and nnpa < 0.01 and (cet1 is None or cet1 >= 0.12)
+    strong = (
+        gnpa < 0.02 and nnpa < 0.01 and cet1 is not None and cet1 >= 0.12
+    )  # capital must be shown
     verdict = "weak" if weak else "strong" if strong else "adequate"
     cet1_text = "n/a" if cet1 is None else f"{cet1:.2%}"
     period = ctx.f.asset_quality_period
@@ -632,12 +634,16 @@ def promoter_and_pledge(ctx: ValuationContext) -> LensResult:
             head += f" ({change * 100:+.1f} pts in a year)"
         if pledged is not None:
             head += f"; {pledged:.1%} of their shares pledged"
+        else:
+            head += "; pledged shares not in the filing"
         if pledged is not None and pledged >= HEAVY_PLEDGE:
             verdict = "heavy pledge"
         elif change is not None and change <= -PROMOTER_SELLING:
             verdict = "promoter selling"
         elif pledged is not None and pledged >= PLEDGE_CAUTION:
             verdict = "some pledging"
+        elif pledged is None:
+            verdict = "pledge data not in filing"  # unknown is not clean
         else:
             verdict = "clean"
     return LensResult(

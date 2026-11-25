@@ -80,10 +80,29 @@ class Journal:
             return [dict(zip(cols, row, strict=True)) for row in cur.fetchall()]
 
 
+MAX_STALE_DAYS = 7  # a close older than this is not "the price on that day" (suspension, gaps)
+
+
+def thin(entries: list[dict[str, Any]], days: int = 30) -> list[dict[str, Any]]:
+    """Viewing a company every day would count as many near-identical calls. Keep a symbol's
+    earliest entry, then the next one at least `days` later, and so on."""
+    kept: list[dict[str, Any]] = []
+    last: dict[str, date] = {}
+    for e in sorted(entries, key=lambda e: (e["day"], e["symbol"])):
+        d = date.fromisoformat(e["day"])
+        prev = last.get(e["symbol"])
+        if prev is None or (d - prev).days >= days:
+            kept.append(e)
+            last[e["symbol"]] = d
+    return kept
+
+
 def _close_on(series: pd.Series, day: date) -> float | None:
-    """Last close on or before day (None if the series has nothing that early)."""
+    """Last close on or before day, if it is recent enough to stand for that day."""
     before = series[[d <= day for d in series.index]]
-    return float(before.iloc[-1]) if not before.empty else None
+    if before.empty or (day - before.index[-1]).days > MAX_STALE_DAYS:
+        return None
+    return float(before.iloc[-1])
 
 
 def _outcome(signal: str, excess: float) -> str:

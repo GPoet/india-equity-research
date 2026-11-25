@@ -151,3 +151,16 @@ def test_legacy_bank_file_period_from_sibling_contexts() -> None:
     assert f.year_to_date is not None
     assert f.year_to_date.start == date(2022, 4, 1)
     assert f.year_to_date_metrics()["pat"] == 461_487_000_000
+
+
+def test_equity_owners_from_parts_only_when_both_known() -> None:
+    from datetime import date
+
+    from eqr.xbrl import Period, _balance
+
+    def p(values):
+        return Period(None, date(2023, 9, 30), values)
+
+    got = _balance(p({"EquityShareCapital": 1.2, "OtherEquity": 597.5, "Equity": 598.7}))
+    assert got["equity_owners"] == pytest.approx(598.7)
+    assert _balance(p({"OtherEquity": 597.5}))["equity_owners"] is None

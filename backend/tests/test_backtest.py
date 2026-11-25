@@ -51,3 +51,47 @@ def test_upside_rank_stats() -> None:
     assert stats["spearman"] == pytest.approx(1.0)
     assert stats["top_quintile_excess"] > stats["bottom_quintile_excess"]
     assert stats["n"] == 5
+
+
+from eqr.backtest import share_basis_factor, summary, usable  # noqa: E402
+
+
+def row(signal, conf, used, excess6, upside=0.1):
+    sc = {h: {"outcome": "pending", "excess": None} for h in ("1m", "3m", "6m", "12m")}
+    hit = (excess6 > 0) == (signal == "Undervalued")
+    sc["6m"] = {
+        "excess": excess6,
+        "stock_return": excess6,
+        "index_return": 0.0,
+        "outcome": "hit" if hit else "miss",
+    }
+    return {"signal": signal, "confidence": conf, "used": used, "upside": upside, "scores": sc}
+
+
+def test_share_basis_factor() -> None:
+    assert share_basis_factor(1526.2, 763.1) == pytest.approx(2.0)
+    assert share_basis_factor(100.4, 100.0) == 1.0  # rounding noise is not a split
+    assert share_basis_factor(None, 100.0) is None
+    assert share_basis_factor(50.0, 100.0) is None  # as-traded below adjusted: data error
+
+
+def test_usable_needs_core_model_and_not_low_confidence() -> None:
+    assert usable(row("Overvalued", "medium", ["dcf", "lynch", "rule1"], 0.0))[0]
+    ok, why = usable(row("Overvalued", "low", ["dcf", "lynch", "rule1"], 0.0))
+    assert not ok and why == "low confidence"
+    ok, why = usable(row("Overvalued", "medium", ["graham_formula", "lynch", "rule1"], 0.0))
+    assert (
+        not ok and why == "no core model (DCF, owner earnings, EPV, residual income, justified P/B)"
+    )
+
+
+def test_summary_excludes_and_counts_and_gives_base_rate() -> None:
+    rows = [
+        row("Overvalued", "high", ["dcf"], -0.1),
+        row("Undervalued", "high", ["epv"], 0.2),
+        row("Overvalued", "low", ["lynch"], -0.5),
+    ]
+    s = summary(rows)
+    assert s["observations"] == 3 and s["usable"] == 2
+    assert s["excluded"] == {"low confidence": 1}
+    assert s["base_rate"]["6m"] == pytest.approx(0.5)  # 1 of 2 usable rows beat the Nifty

@@ -14,7 +14,7 @@ from typing import Any, TypeVar
 import yfinance as yf
 
 from eqr.fundamentals import Fundamentals, owners_profit
-from eqr.journal import HORIZONS, score_entry, summarise
+from eqr.journal import HORIZONS, score_entry, summarise, thin
 from eqr.llm.xai import DEFAULT_MODEL, SpendLedger, XaiClient, XaiError
 from eqr.pipeline import Context, announcements, research, valuation
 from eqr.research.store import ResearchStore
@@ -212,7 +212,7 @@ class LiveServices:
         return {
             "as_of": today,
             "entries": scored,
-            "summary": summarise(scored),
+            "summary": summarise(thin(scored)),  # one call per company per 30 days
             "engine_version": ENGINE_VERSION,
         }
 
@@ -246,9 +246,12 @@ class LiveServices:
         if client is None:
             raise XaiError("no_key", "No xAI API key: add XAI_API_KEY to backend/.env")
         sec = self.ctx.resolver.by_symbol(symbol)
-        run = run_sentiment(
-            client, sec.name if sec else symbol, symbol, self._industry(symbol), date.today()
-        )
+        try:
+            run = run_sentiment(
+                client, sec.name if sec else symbol, symbol, self._industry(symbol), date.today()
+            )
+        finally:
+            client.close()
         data = {
             "symbol": symbol,
             "report": run.report.model_dump(),

@@ -90,3 +90,11 @@ def test_invalid_grok_output_is_error() -> None:
     with pytest.raises(XaiError) as err:
         run_sentiment(FakeXai({"overall": "great"}, set()), "X", "X", None, TODAY)
     assert err.value.kind == "invalid_output"
+
+
+def test_url_normalisation_keeps_real_posts() -> None:
+    from eqr.sentiment.schema import _norm
+
+    assert _norm("https://twitter.com/i/status/111?s=20") == _norm("https://x.com/i/status/111")
+    assert _norm("https://www.x.com/i/status/111/") == _norm("https://x.com/i/status/111")
+    assert _norm("https://notx.com/i/status/111") != _norm("https://x.com/i/status/111")

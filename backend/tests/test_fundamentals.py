@@ -142,3 +142,14 @@ def test_shares_cross_checked_against_eps() -> None:
     f = build_fundamentals("X", rows)
     assert f.shares == pytest.approx(100.0)
     assert "profit / EPS" in f.shares_note
+
+
+def test_year_sheet_falls_back_to_capital_plus_reserves() -> None:
+    from eqr.fundamentals import _year_sheet
+
+    assert _year_sheet({}, {"paid_up_capital": 5.0, "reserves_ex_revaluation": 95.0}) == {
+        "equity_owners": 100.0
+    }
+    assert _year_sheet({}, {"paid_up_capital": 5.0}) == {}  # partial: not a total
+    real = {"equity_owners": 99.0}
+    assert _year_sheet(real, {"paid_up_capital": 5.0, "reserves_ex_revaluation": 95.0}) is real
