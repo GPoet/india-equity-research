@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import math
 from dataclasses import asdict, dataclass, field
+from datetime import date
 from pathlib import Path
 from statistics import NormalDist
 from typing import Any
@@ -18,7 +19,8 @@ import pandas as pd
 FEATURES = ("mom_12_1", "rev_1m", "surprise", "value")
 HORIZONS = {"1m": 21, "2m": 42}  # trading days
 Z80, Z50 = NormalDist().inv_cdf(0.90), NormalDist().inv_cdf(0.75)
-RIDGE = 0.02  # shrinkage per observation, on standardised inputs
+RIDGE = 0.02
+DATE_STEP = 21  # trading days between test dates (monthly)  # shrinkage per observation, on standardised inputs
 MODEL_PATH = Path(__file__).resolve().parents[3] / "config" / "forecast_model.json"
 _N = NormalDist()
 
@@ -140,13 +142,16 @@ def evaluate(hm: HorizonModel, rows: list[dict[str, Any]], name: str) -> dict[st
         "n": len(df),
         "dates": len(ics),
         "rank_ic": ic_mean,
-        "rank_ic_t": ic_t,
+        # Monthly dates ~21 trading days apart: a 42-day window overlaps the next one by half,
+        # so there are ~half as many independent tests. Scale the t-stat down accordingly.
+        "rank_ic_t": ic_t * math.sqrt(min(1.0, DATE_STEP / hm.days)) if ic_t is not None else None,
+        "rank_ic_t_unadjusted": ic_t,
         "top_minus_bottom": float(np.mean(spreads)) if spreads else None,
         "direction_right": float(((df["pred"] > 0) == (y > 0)).mean()),
         "base_rate_beat_nifty": float((y > 0).mean()),
         "coverage_80": float((resid <= Z80 * df["sig"]).mean()),
         "coverage_50": float((resid <= Z50 * df["sig"]).mean()),
-        "note": "6- and 8-week windows from monthly dates overlap; the t-stat is optimistic for 2 months",
+        "note": "t-stat adjusted for overlapping windows (monthly dates, longer horizons)",
     }
 
 
@@ -173,6 +178,7 @@ class HorizonForecast:
     p_beat_nifty: float
     expected_excess: float
     results_in_window: bool
+    target_date: str  # as-of date + the horizon in trading days (weekends skipped; holidays not)
     lean: str
 
 
@@ -182,6 +188,7 @@ def forecast(
     price: float,
     beta: float,
     market_return_year: float,
+    as_of: date | None = None,
 ) -> list[HorizonForecast]:
     """x carries the inputs plus vol_daily, vol_excess_daily, jump_var, event_21/event_42."""
     out = []
@@ -218,6 +225,9 @@ def forecast(
                 p_beat_nifty=_N.cdf(ex / sig_ex) if sig_ex > 0 else float(ex > 0),
                 expected_excess=ex,
                 results_in_window=bool(event),
+                target_date=str(
+                    np.busday_offset(np.datetime64(as_of or date.today()), hm.days, roll="forward")
+                ),
                 lean=lean,
             )
         )

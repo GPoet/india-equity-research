@@ -198,6 +198,7 @@ export type HorizonForecast = {
   p_beat_nifty: number;
   expected_excess: number;
   results_in_window: boolean;
+  target_date: string;
   lean: string;
 };
 

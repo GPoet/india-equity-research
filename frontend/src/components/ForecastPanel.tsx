@@ -5,7 +5,10 @@ import { useEffect, useState } from "react";
 import { api, ApiError, type Forecast, type HorizonForecast } from "@/lib/api";
 import { pct, rupees } from "@/lib/format";
 
-const LABEL: Record<string, string> = { "1m": "1 month", "2m": "2 months" };
+// "24 Dec 2026", fixed to the Indian calendar format whatever the browser's locale.
+function longDate(iso: string): string {
+  return new Date(`${iso}T00:00:00`).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
+}
 
 function leanTone(lean: string): string {
   if (lean === "lean buy") return "good";
@@ -46,7 +49,7 @@ export function ForecastPanel({ symbol }: { symbol: string }) {
 
   return (
     <div className="panel">
-      <h2>Next 1 to 2 months</h2>
+      <h2>Agents Forecast</h2>
       {error && <p className="error">{error}</p>}
       {!f && !error && <p className="small muted">Working out the range…</p>}
       {f && f.status !== "ok" && <p className="small muted">{f.error}.</p>}
@@ -56,7 +59,7 @@ export function ForecastPanel({ symbol }: { symbol: string }) {
             <div key={h.horizon} className="forecast-row">
               <div className="forecast-head">
                 <span>
-                  {LABEL[h.horizon] ?? h.horizon}: <strong>{rupees(h.median)}</strong>{" "}
+                  By {longDate(h.target_date)}: <strong>{rupees(h.median)}</strong>{" "}
                   <span className="muted small">({pct(h.median / f.price - 1, true)})</span>
                 </span>
                 <span className={`tag ${leanTone(h.lean)}`}>{h.lean}</span>

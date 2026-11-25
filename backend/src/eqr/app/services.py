@@ -250,7 +250,7 @@ class LiveServices:
                 "price": v["price"],
                 "price_as_of": v["price_as_of"],
                 "horizons": [
-                    asdict(h) for h in forecast(model, x, v["price"], beta, market_return)
+                    asdict(h) for h in forecast(model, x, v["price"], beta, market_return, today)
                 ],
                 "inputs": {
                     k: x.get(k)

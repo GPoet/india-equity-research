@@ -64,6 +64,10 @@ def test_forecast_ranges_and_gate() -> None:
     f = forecast(gated, x, 100.0, 1.0, 0.12)[0]
     assert f.band80[0] < f.band50[0] < f.median < f.band50[1] < f.band80[1]
     assert f.results_in_window and f.lean == "no measured edge"
+    from datetime import date
+
+    dated = forecast(gated, x, 100.0, 1.0, 0.12, date(2026, 11, 25))[0]
+    assert dated.target_date == "2026-12-24"  # 21 trading days, weekends skipped
     assert 0.5 < f.p_beat_nifty < 1
     live = ForecastModel({"1m": hm}, "a", "b", {}, {"1m": True})
     assert forecast(live, x, 100.0, 1.0, 0.12)[0].lean == "lean buy"
@@ -78,3 +82,12 @@ def test_save_load_roundtrip(tmp_path) -> None:
     back = ForecastModel.load(tmp_path / "m.json")
     assert back.horizons["1m"].coefs == pytest.approx(hm.coefs)
     assert back.has_edge == {"1m": True}
+
+
+def test_t_stat_adjusted_for_overlap() -> None:
+    rows = synth(seed=1)
+    for r in rows:
+        r["y_2m"] = r["y_1m"]
+    hm = fit_horizon(rows, "2m")
+    t = evaluate(hm, synth(seed=2) and [dict(r, y_2m=r["y_1m"]) for r in synth(seed=2)], "2m")
+    assert t["rank_ic_t"] == pytest.approx(t["rank_ic_t_unadjusted"] * (21 / 42) ** 0.5)
