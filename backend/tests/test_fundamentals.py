@@ -185,3 +185,26 @@ def test_load_fundamentals_skips_unreadable_filings(monkeypatch) -> None:
     monkeypatch.setattr(fm, "build_fundamentals", fake_build)
     fm.load_fundamentals(Src(), "X")
     assert seen["pairs"] == [(good, "filing")]
+
+
+def test_main_basis_prefers_consolidated_only_with_enough_history() -> None:
+    from datetime import date
+    from types import SimpleNamespace
+
+    from eqr.fundamentals import main_basis
+
+    def refs(n_cons, n_stand):
+        out = [
+            SimpleNamespace(consolidated=True, period_end=date(2020 + i // 4, 3 * (i % 4) + 1, 1))
+            for i in range(n_cons)
+        ]
+        out += [
+            SimpleNamespace(consolidated=False, period_end=date(2020 + i // 4, 3 * (i % 4) + 1, 1))
+            for i in range(n_stand)
+        ]
+        return out
+
+    assert main_basis(refs(9, 38)) is False  # sparse consolidated history (ABB on BSE)
+    assert main_basis(refs(30, 32)) is True
+    assert main_basis(refs(5, 0)) is True
+    assert main_basis(refs(0, 5)) is False

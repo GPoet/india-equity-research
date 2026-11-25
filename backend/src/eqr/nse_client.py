@@ -56,8 +56,12 @@ class NseClient:
         timeout: float = 30.0,
         session_factory: Callable[[], Any] | None = None,
         backoff: float = 2.0,
+        base: str = BASE,
+        api: str = API,
+        cache_prefix: str = "nse",
     ) -> None:
         self._cache = cache
+        self._base, self._api, self._prefix = base, api, cache_prefix  # BSE reuses this client
         self._min_interval = min_interval
         self._timeout = timeout
         self._backoff = backoff
@@ -96,7 +100,7 @@ class NseClient:
     def _warm(self) -> None:
         self._session = None
         session = self._session_factory()
-        resp = self._get(session, BASE + "/")
+        resp = self._get(session, self._base + "/")
         if resp.status_code != 200:
             raise NseError(f"NSE home page returned HTTP {resp.status_code}")
         self._session = session  # only keep a session that warmed up successfully
@@ -124,7 +128,11 @@ class NseClient:
                 if self._session is None:
                     self._warm()
                 try:
-                    resp = self._get(self._session, url, headers={"Referer": BASE + "/"})
+                    resp = self._get(
+                        self._session,
+                        url,
+                        headers={"Referer": self._base + "/", "Origin": self._base},
+                    )
                 except NseError as exc:
                     last_error = exc
                     time.sleep(self._backoff * (attempt + 1))
@@ -146,7 +154,7 @@ class NseClient:
     def get_text(
         self, url: str, ttl: float | None, validate: Callable[[str], bool] | None = None
     ) -> str:
-        key = f"nse:{url}"
+        key = f"{self._prefix}:{url}"
         if self._cache and (hit := self._cache.get(key)) is not None:
             return hit
         text = self._fetch(url).text
@@ -159,11 +167,11 @@ class NseClient:
     def forget_json(self, path: str) -> None:
         """Drop a cached API response so the next get_json fetches it fresh."""
         if self._cache:
-            self._cache.delete(f"nse:{API + path}")
+            self._cache.delete(f"{self._prefix}:{self._api + path}")
 
     def get_json(self, path: str, ttl: float | None) -> Any:
-        url = API + path
-        key = f"nse:{url}"
+        url = self._api + path
+        key = f"{self._prefix}:{url}"
         if self._cache and (hit := self._cache.get(key)) is not None:
             return json.loads(hit)
         text = self._fetch(url).text

@@ -10,6 +10,7 @@ import logging
 from collections.abc import Iterable
 from dataclasses import dataclass, field, replace
 from datetime import date
+from typing import Any
 
 from eqr.nse_client import NseError
 from eqr.sources.filings import FilingRef, FilingsSource
@@ -335,12 +336,27 @@ def build_fundamentals(symbol: str, filings: Iterable[tuple[FilingRef, Filing]])
     )
 
 
+CONSOLIDATED_COVERAGE = 0.75
+
+
+def main_basis(refs: Iterable[Any]) -> bool:
+    """True for consolidated. Consolidated is the better view of a group, but some companies
+    filed it only now and then (ABB on BSE: 9 consolidated quarters against 38 standalone);
+    then the standalone history is the one that can be valued."""
+    refs = list(refs)
+    cons = {r.period_end for r in refs if r.consolidated}
+    stand = {r.period_end for r in refs if not r.consolidated}
+    if not cons:
+        return False
+    return len(cons) >= CONSOLIDATED_COVERAGE * len(stand)
+
+
 def load_fundamentals(source: FilingsSource, symbol: str) -> Fundamentals:
     """Fetch every results filing for a symbol (cached) and assemble its history."""
     refs = source.list(symbol)
     if not refs:
         raise ValueError(f"NSE lists no results filings for {symbol}")
-    consolidated = any(r.consolidated for r in refs)
+    consolidated = main_basis(refs)
     chosen = [r for r in refs if r.consolidated == consolidated]
     pairs = []
     for r in chosen:

@@ -225,6 +225,10 @@ export type ScanRow = {
   red_flags: string[];
   model_notes?: string[];
   valuation_note?: string | null;
+  exchange?: "NSE" | "BSE";
+  ticker?: string;
+  link?: string | null;
+  key?: string;
   series?: string;
   company_type: string;
   forecast: Record<string, ScanForecast> | null;

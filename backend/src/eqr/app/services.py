@@ -276,11 +276,13 @@ class LiveServices:
 
         return self._memo.get("nifty500", UNIVERSE_TTL, make)
 
-    def _all_names(self) -> dict[str, str]:
-        """Symbol -> company name for every NSE-listed company, main board and SME."""
+    def _all_names(self) -> tuple[dict[str, str], set[str]]:
+        """(symbol -> company name, ISINs) for every NSE-listed company, main board and SME.
+        The ISINs tell which BSE companies are also on NSE."""
 
-        def make() -> dict[str, str]:
+        def make() -> tuple[dict[str, str], set[str]]:
             out: dict[str, str] = {}
+            isins: set[str] = set()
             for url, sym_col, name_col in ALL_LISTS:
                 try:
                     text = self.ctx.client.get_bytes(url).decode("utf-8-sig")
@@ -291,7 +293,10 @@ class LiveServices:
                     r = {k.strip(): (v or "").strip() for k, v in r.items() if k}
                     if r.get(sym_col):
                         out[r[sym_col]] = r.get(name_col) or r[sym_col]
-            return out
+                    isin = r.get("ISIN NUMBER") or r.get("ISIN_NUMBER")
+                    if isin:
+                        isins.add(isin)
+            return out, isins
 
         return self._memo.get("all-names", UNIVERSE_TTL, make)
 

@@ -44,15 +44,17 @@ def fetch_nifty() -> pd.Series:
     return _dated(yf.Ticker(INDEX).history(period="max", auto_adjust=False)["Close"])
 
 
-def fetch_market_series(symbol: str, index: pd.Series | None = None) -> MarketSeries:
+def fetch_market_series(
+    symbol: str, index: pd.Series | None = None, yahoo: str | None = None
+) -> MarketSeries:
     """Full daily history for the stock and the Nifty 50, plus dividends (None if Yahoo fails).
     Bonus/split factors come from the filings (fundamentals.share_action_factors) because
     Yahoo's split *list* misses Indian bonus issues; its price and dividend *history* is
     adjusted for them (checked on Bajaj Finance's 2025 bonus + split), so it is used as is."""
-    closes = _dated(history(symbol, period="max")["Close"])
+    closes = _dated(history(symbol, period="max", yahoo=yahoo)["Close"])
     index = fetch_nifty() if index is None else index  # pass it in when scanning many stocks
     try:
-        divs: pd.Series | None = yf.Ticker(yahoo_symbol(symbol)).dividends
+        divs: pd.Series | None = yf.Ticker(yahoo or yahoo_symbol(symbol)).dividends
         divs = _dated(divs) if divs is not None else None
     except Exception as exc:  # noqa: BLE001 - dividends are optional; None means unknown
         log.warning("Dividends for %s failed: %s", symbol, exc)

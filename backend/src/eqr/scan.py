@@ -16,16 +16,16 @@ import pandas as pd
 from eqr.backtest import refs_known_on
 from eqr.forecast.dataset import observation
 from eqr.forecast.model import ForecastModel, forecast
-from eqr.fundamentals import load_fundamentals
+from eqr.fundamentals import load_fundamentals, main_basis
 from eqr.market import MarketInputs
 from eqr.nse_client import NseError
 from eqr.pipeline import Context, ownership
 from eqr.sources.announcements import Announcement
 from eqr.sources.bhavcopy import DailyBar
-from eqr.sources.filings import FilingRef
+from eqr.sources.filings import FilingRef, FilingsSource
 from eqr.valuation.blend import RED_FLAG_VERDICTS
 from eqr.valuation.engine import fetch_market_series, value_company
-from eqr.valuation.pricedata import beta_as_of, price_data_as_of
+from eqr.valuation.pricedata import MarketSeries, beta_as_of, price_data_as_of
 
 log = logging.getLogger(__name__)
 
@@ -72,16 +72,23 @@ def rank(
 
 
 def _valuation(
-    ctx: Context, symbol: str, series: Any, bar: DailyBar, market: MarketInputs
+    ctx: Context,
+    symbol: str,
+    series: Any,
+    bar: DailyBar,
+    market: MarketInputs,
+    filings: FilingsSource,
+    with_ownership: bool,
 ) -> dict[str, Any]:
     """Valuation fields for the row. Raises when the company cannot be valued (no usable
     filings: new listings, SME half-yearly filers, unusual formats)."""
     day = bar.trade_date
-    f = load_fundamentals(ctx.filings, symbol)
+    f = load_fundamentals(filings, symbol)
     prices = price_data_as_of(
         series, [y.fy_end for y in f.years], day, price=bar.close, price_as_of=day.isoformat()
     )
-    report = value_company(f, market, prices, day, ownership(ctx, symbol))
+    own = ownership(ctx, symbol) if with_ownership else None
+    report = value_company(f, market, prices, day, own)
     r = report.result
     return {
         "signal": r.signal,
@@ -107,7 +114,7 @@ def _current_refs(refs: list[FilingRef], day: date) -> list[FilingRef]:
     main basis (consolidated when it reports one). The same set the valuation already
     downloaded, so the forecast adds no NSE requests."""
     known = refs_known_on(refs, day + timedelta(days=1))  # filed up to the end of `day`
-    consolidated = any(r.consolidated for r in known)
+    consolidated = main_basis(known)
     return [r for r in known if r.consolidated == consolidated]
 
 
@@ -119,12 +126,21 @@ def scan_symbol(
     nifty: pd.Series,
     market: MarketInputs,
     model: ForecastModel | None,
+    *,
+    filings: FilingsSource | None = None,
+    series: MarketSeries | None = None,
+    with_ownership: bool = True,
+    extra: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """One row per traded stock. Prices are required; the valuation is not: a company that
     cannot be valued still gets its price-based forecast, with the reason noted."""
     day = bar.trade_date
-    series = fetch_market_series(symbol, index=nifty)
+    filings = filings or ctx.filings
+    series = series or fetch_market_series(symbol, index=nifty)
     row: dict[str, Any] = {
+        "exchange": "NSE",
+        "ticker": symbol,
+        "link": None,
         "symbol": symbol,
         "name": name,
         "series": bar.series,
@@ -141,9 +157,10 @@ def scan_symbol(
         "company_type": None,
         "valuation_note": None,
         "forecast": None,
+        **(extra or {}),
     }
     try:
-        v = _valuation(ctx, symbol, series, bar, market)
+        v = _valuation(ctx, symbol, series, bar, market, filings, with_ownership)
         beta = v.pop("beta")
         row.update(v)
     except (ValueError, NseError, KeyError, ZeroDivisionError) as exc:
@@ -153,12 +170,12 @@ def scan_symbol(
         return row
     pairs = []
     try:
-        refs = _current_refs(ctx.filings.list_raw(symbol), day)
+        refs = _current_refs(filings.list_raw(symbol), day)
     except (ValueError, NseError):
         refs = []
     for ref in refs:
         try:
-            pairs.append((ref, ctx.filings.fetch(ref)))
+            pairs.append((ref, filings.fetch(ref)))
         except Exception as exc:  # noqa: BLE001 - one unreadable filing must not drop the company
             log.warning("Scan: %s %s unreadable: %s", symbol, ref.period_end, exc)
     value_row = (

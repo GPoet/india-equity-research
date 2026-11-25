@@ -25,7 +25,7 @@ from typing import Any
 
 import pandas as pd
 
-from eqr.fundamentals import build_fundamentals
+from eqr.fundamentals import build_fundamentals, main_basis
 from eqr.journal import HORIZONS, score_entry, summarise
 from eqr.market import MarketInputs
 from eqr.sources.bhavcopy import DailyBar
@@ -134,7 +134,7 @@ def value_as_of(
     """A valuation row, or the reason there is none."""
     known_urls = {r.xbrl_url for r in refs_known_on([r for r, _ in pairs], as_of)}
     chosen = [(r, f) for r, f in pairs if r.xbrl_url in known_urls]
-    consolidated = any(r.consolidated for r, _ in chosen)
+    consolidated = main_basis(r for r, _ in chosen)
     chosen = [(r, f) for r, f in chosen if r.consolidated == consolidated]
     if len(chosen) < 8:
         return "under two years of filings"

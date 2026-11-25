@@ -19,7 +19,7 @@ from eqr.forecast.features import (
     price_features,
 )
 from eqr.forecast.model import HORIZONS
-from eqr.fundamentals import build_fundamentals, owners_profit
+from eqr.fundamentals import build_fundamentals, main_basis, owners_profit
 from eqr.sources.filings import FilingRef
 from eqr.valuation.pricedata import MarketSeries
 from eqr.xbrl import Filing
@@ -74,7 +74,7 @@ def observation(
     known = refs_known_on([r for r, _ in pairs], as_of)
     known_urls = {r.xbrl_url for r in known}
     chosen = [(r, f) for r, f in pairs if r.xbrl_url in known_urls]
-    consolidated = any(r.consolidated for r, _ in chosen)
+    consolidated = main_basis(r for r, _ in chosen)
     chosen = [(r, f) for r, f in chosen if r.consolidated == consolidated]
     filings = _results_filings(known)
 

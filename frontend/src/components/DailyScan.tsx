@@ -42,10 +42,21 @@ function ScanTable({ rows, showFlags }: { rows: ScanRow[]; showFlags: boolean })
           {rows.map((r, i) => {
             const f = r.forecast?.["1m"];
             return (
-              <tr key={r.symbol}>
+              <tr key={r.key ?? r.symbol}>
                 <td className="num muted">{i + 1}</td>
                 <td>
-                  <Link href={`/company/${encodeURIComponent(r.symbol)}`} className="strong-link">{r.symbol}</Link>
+                  {r.exchange === "BSE" ? (
+                    <>
+                      {r.link ? (
+                        <a href={r.link} target="_blank" rel="noreferrer noopener" className="strong-link">{r.ticker ?? r.symbol}</a>
+                      ) : (
+                        <strong>{r.ticker ?? r.symbol}</strong>
+                      )}{" "}
+                      <span className="tag plain" title="Listed only on BSE">BSE</span>
+                    </>
+                  ) : (
+                    <Link href={`/company/${encodeURIComponent(r.symbol)}`} className="strong-link">{r.symbol}</Link>
+                  )}
                   <div className="stock-name">{r.name}</div>
                 </td>
                 <td className="num">{rupees(r.price)}</td>
@@ -130,9 +141,11 @@ export function DailyScan() {
         </button>
       </div>
       <p className="card-note">
-        Every NSE-listed stock that traded, main board and SME, run through the valuation, quality checks, ownership and the Agents
+        Every listed company that traded (NSE main board and SME, plus companies listed only on BSE) run through the valuation,
+        quality checks, ownership and the Agents
         Forecast, ranked by the odds of beating the Nifty over the next month. Picks leave out stocks with red flags and stocks that
-        traded under ₹1 crore on the day. Runs by itself each trading day after NSE publishes its end-of-day file (around 7 pm).
+        traded under ₹1 crore on the day. BSE-only companies do not get the promoter pledge check yet, and their filings refresh
+        weekly. Runs by itself each trading day after NSE publishes its end-of-day file (around 7 pm).
       </p>
       {error && <p className="error">{error}</p>}
       {status?.running && p?.total ? (

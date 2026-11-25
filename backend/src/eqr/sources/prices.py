@@ -40,10 +40,12 @@ def quote(nse_symbol: str) -> Quote:
     return Quote(symbol=nse_symbol, price=price, prev_close=prev, as_of=as_of)
 
 
-def history(nse_symbol: str, period: str = "10y", interval: str = "1d") -> pd.DataFrame:
+def history(
+    nse_symbol: str, period: str = "10y", interval: str = "1d", yahoo: str | None = None
+) -> pd.DataFrame:
     """OHLCV history. Close is split/bonus-adjusted only (what traded, comparable across
     splits); Adj Close also folds in dividends, for total-return use. NaN rows dropped."""
-    hist = yf.Ticker(yahoo_symbol(nse_symbol)).history(
+    hist = yf.Ticker(yahoo or yahoo_symbol(nse_symbol)).history(  # yahoo= for BSE codes (.BO)
         period=period, interval=interval, auto_adjust=False
     )
     hist = hist.dropna(subset=["Close"])
