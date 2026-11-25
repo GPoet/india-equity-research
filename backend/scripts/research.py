@@ -8,53 +8,12 @@ plan's usage limits.
 from __future__ import annotations
 
 import argparse
-import json
 import logging
-import os
-import re
 import sys
-import time
-from datetime import date, timedelta
-from pathlib import Path
+from datetime import date
 
-from eqr.cache import Cache
-from eqr.fundamentals import load_fundamentals
-from eqr.llm.claude_cli import ClaudeCliProvider, LlmError
-from eqr.market import load_market_inputs
-from eqr.nse_client import NseClient
-from eqr.research.agent import NEWS_WINDOW_DAYS, run_research
-from eqr.research.brief import build_brief
-from eqr.sources.announcements import fetch_announcements
-from eqr.sources.documents import fetch_documents, select_documents
-from eqr.sources.filings import FilingsSource
-from eqr.sources.universe import load_resolver
-from eqr.valuation.engine import fetch_price_data, value_company
-
-ROOT = Path(__file__).resolve().parent.parent
-CACHE_HOURS = 12
-SCHEMA_VERSION = 2
-
-
-def cache_path(symbol: str, model: str) -> Path:
-    safe = re.sub(r"[^A-Za-z0-9_&-]", "_", f"{symbol}_{model}")
-    return ROOT / "data" / "research" / f"{safe}.json"
-
-
-def load_cached(path: Path) -> dict | None:
-    if not path.exists() or time.time() - path.stat().st_mtime > CACHE_HOURS * 3600:
-        return None
-    try:
-        data = json.loads(path.read_text())
-    except (OSError, json.JSONDecodeError):
-        return None
-    return data if data.get("schema_version") == SCHEMA_VERSION else None
-
-
-def save(path: Path, data: dict) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(data, indent=1))
-    os.replace(tmp, path)
+from eqr.llm.claude_cli import LlmError
+from eqr.pipeline import Context, research
 
 
 def print_report(data: dict) -> None:
@@ -108,52 +67,23 @@ def main() -> int:
     ap.add_argument("--refresh", action="store_true")
     args = ap.parse_args()
 
-    res = load_resolver(ROOT / "data").resolve(args.query)
+    ctx = Context()
+    res = ctx.resolver.resolve(args.query)
     if res.match is None:
         print("Not sure which company: " + ", ".join(c.security.symbol for c in res.candidates))
         return 2
     sym, name = res.match.symbol, res.match.name
-    out = cache_path(sym, args.model)
-    cached = None if args.refresh else load_cached(out)
+    cached = None if args.refresh else ctx.research_store.load(sym, args.model)
     if cached:
-        print(f"(cached result, under {CACHE_HOURS}h old; --refresh to rerun)")
+        print("(cached result, under 12h old; --refresh to rerun)")
         print_report(cached)
         return 0
-
-    today = date.today()
-    cache = Cache(ROOT / "data" / "cache.sqlite")
-    client = NseClient(cache=cache)
-    f = load_fundamentals(FilingsSource(client), sym)
-    prices = fetch_price_data(sym, [y.fy_end for y in f.years], today)
-    valuation = value_company(f, load_market_inputs(), prices, today)
-    anns = fetch_announcements(client, sym, today - timedelta(days=NEWS_WINDOW_DAYS), today)
-    docs = fetch_documents(client, cache, anns)
-    warnings = []
-    if select_documents(anns) and not docs:
-        warnings.append(
-            "None of the company's NSE filings could be read; results rely on web sources"
-        )
-    brief = build_brief(name, anns[0].industry if anns else None, f, valuation)
     print(f"Researching {sym} with Claude ({args.model}); this takes a few minutes...")
     try:
-        run = run_research(
-            ClaudeCliProvider(), brief, anns, today, model=args.model, documents=docs
-        )
+        data = research(ctx, sym, name, date.today(), model=args.model)
     except LlmError as exc:
         print(f"Research failed ({exc.kind}): {exc}")
         return 1
-    data = {
-        "schema_version": SCHEMA_VERSION,
-        "symbol": sym,
-        "name": name,
-        "brief": brief.facts,
-        "report": run.report.model_dump(),
-        "dropped": run.dropped,
-        "meta": run.meta,
-        "warnings": warnings,
-    }
-    if not warnings:
-        save(out, data)  # a degraded run is shown but not cached
     print_report(data)
     return 0
 

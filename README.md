@@ -4,7 +4,18 @@ Paste a link, company name or ticker; get financials, valuation, news, sentiment
 
 ## Status
 
-Phases 0-3 and 5 done: data layer, valuation engine, Claude research agent, sector view. Grok sentiment (needs an xAI key), dashboard and backtest not built yet. Formulas: [docs/FORMULAS.md](docs/FORMULAS.md).
+Phases 0-3, 5 and 6 done: data layer, valuation engine, Claude research agent, sector view, dashboard. Grok sentiment (waiting for an xAI key) and the track-record journal not built yet. Formulas: [docs/FORMULAS.md](docs/FORMULAS.md).
+
+## Run the dashboard
+
+Two terminals:
+
+```bash
+cd backend && uv run python scripts/run_api.py      # API on 127.0.0.1:8000
+cd frontend && npm install && npm run dev            # dashboard on localhost:3000
+```
+
+Open http://localhost:3000, type a company name or ticker, or paste a Screener, Moneycontrol, Tickertape, Groww, BSE, NSE or Yahoo link. Research runs on your local Claude Code login.
 
 ## Backend
 
