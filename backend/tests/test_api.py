@@ -11,6 +11,8 @@ from eqr.app.serialize import clean
 class FakeServices:
     def __init__(self) -> None:
         self.research_calls = 0
+        self.cached = None
+        self.fail_company = False
 
     def resolve(self, q):
         if q.lower() in ("tcs", "tata consultancy"):
@@ -27,6 +29,10 @@ class FakeServices:
         return symbol == "TCS"
 
     def company(self, symbol):
+        if self.fail_company:
+            from eqr.nse_client import NseError
+
+            raise NseError("HTTP 503 for https://www.nseindia.com/api/x")
         return {
             "symbol": symbol,
             "valuation": {"result": {"mid": float("nan"), "signal": "Fairly valued"}},
@@ -47,14 +53,14 @@ class FakeServices:
         return {"symbol": symbol, "report": {"summary": "ok"}}
 
     def cached_research(self, symbol, model):
-        return None
+        return self.cached
 
 
 @pytest.fixture()
 def client():
     fake = FakeServices()
     app = create_app(fake)
-    with TestClient(app) as c:
+    with TestClient(app, base_url="http://localhost") as c:
         c.fake = fake
         yield c
 
@@ -85,9 +91,11 @@ def test_unknown_symbol_404(client) -> None:
 
 def test_research_job_lifecycle(client) -> None:
     assert client.get("/api/company/TCS/research").json()["status"] == "none"
-    started = client.post("/api/company/TCS/research").json()
-    assert started["status"] in ("running", "done")
-    again = client.post("/api/company/TCS/research").json()  # no duplicate job while running
+    started = client.post("/api/company/TCS/research", headers={"X-Equity-Desk": "1"}).json()
+    assert started["status"] in ("queued", "running", "done")
+    again = client.post(
+        "/api/company/TCS/research", headers={"X-Equity-Desk": "1"}
+    ).json()  # no duplicate job while running
     for _ in range(50):
         state = client.get("/api/company/TCS/research").json()
         if state["status"] == "done":
@@ -96,10 +104,59 @@ def test_research_job_lifecycle(client) -> None:
     assert state["status"] == "done"
     assert state["data"]["report"]["summary"] == "ok"
     assert client.fake.research_calls == 1
-    assert again["status"] in ("running", "done")
+    assert again["status"] in ("queued", "running", "done")
 
 
 def test_clean_handles_nested_nan_and_inf() -> None:
     out = clean({"a": [1.0, float("inf")], "b": {"c": float("nan")}, "d": (2, 3)})
     assert out == {"a": [1.0, None], "b": {"c": None}, "d": [2, 3]}
     assert not any(isinstance(v, float) and math.isnan(v) for v in out["a"] if v is not None)
+
+
+H = {"X-Equity-Desk": "1"}
+
+
+def test_post_without_custom_header_rejected(client) -> None:
+    r = client.post("/api/company/TCS/research")
+    assert r.status_code == 403
+    assert client.fake.research_calls == 0
+
+
+def test_cross_site_post_rejected(client) -> None:
+    r = client.post("/api/company/TCS/research", headers={**H, "Origin": "http://evil.example"})
+    assert r.status_code == 403
+    r = client.post("/api/company/TCS/research", headers={**H, "Sec-Fetch-Site": "cross-site"})
+    assert r.status_code == 403
+
+
+def test_foreign_host_header_rejected(client) -> None:
+    assert client.get("/api/health", headers={"Host": "evil.example"}).status_code == 400
+
+
+def test_fresh_cache_served_unless_forced(client) -> None:
+    client.fake.cached = {"symbol": "TCS", "report": {"summary": "cached"}}
+    r = client.post("/api/company/TCS/research", headers=H).json()
+    assert r["status"] == "done" and r.get("cached") is True
+    assert client.fake.research_calls == 0
+
+
+def test_upstream_failure_is_503_with_reason(client) -> None:
+    client.fake.fail_company = True
+    r = client.get("/api/company/TCS")
+    assert r.status_code == 503
+    assert "NSE" in r.json()["detail"]
+
+
+def test_memo_caches_failure_briefly() -> None:
+    from eqr.app.services import _Memo
+
+    memo, calls = _Memo(), []
+
+    def boom():
+        calls.append(1)
+        raise RuntimeError("down")
+
+    for _ in range(3):
+        with pytest.raises(RuntimeError):
+            memo.get("k", 60, boom)
+    assert len(calls) == 1

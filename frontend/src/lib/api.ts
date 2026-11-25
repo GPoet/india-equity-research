@@ -134,6 +134,7 @@ export type Research = {
 
 export type ResearchState =
   | { status: "none" }
+  | { status: "queued" }
   | { status: "running" }
   | { status: "done"; data: Research; cached?: boolean }
   | { status: "failed"; error: string; kind: string };
@@ -177,5 +178,10 @@ export const api = {
   sector: (s: string) => call<SectorPicture>(`/api/company/${encodeURIComponent(s)}/sector`),
   sectors: () => call<{ as_of: string; sectors: SectorStat[] }>(`/api/sectors`),
   research: (s: string) => call<ResearchState>(`/api/company/${encodeURIComponent(s)}/research`),
-  startResearch: (s: string) => call<ResearchState>(`/api/company/${encodeURIComponent(s)}/research`, { method: "POST" }),
+  // The custom header lets the API refuse cross-site requests (see backend app/api.py).
+  startResearch: (s: string, force = false) =>
+    call<ResearchState>(`/api/company/${encodeURIComponent(s)}/research${force ? "?force=true" : ""}`, {
+      method: "POST",
+      headers: { "X-Equity-Desk": "1" },
+    }),
 };

@@ -71,7 +71,7 @@ export function CompanyView({ symbol }: { symbol: string }) {
           </>
         ) : (
           <p className="muted" style={{ marginTop: "1rem" }}>
-            {b.reasons.join(". ")}.
+            {b.reasons.length > 0 ? `${b.reasons.join(". ")}.` : "No fair value could be computed."}
           </p>
         )}
         {v.implied_growth.applicable && <p className="priced-in">{v.implied_growth.summary}.</p>}
@@ -112,7 +112,7 @@ export function CompanyView({ symbol }: { symbol: string }) {
             <section>
               <h2>Data notes</h2>
               <ul className="small muted">
-                {[...a.notes, ...v.warnings].map((n) => <li key={n}>{n}</li>)}
+                {[...a.notes, ...v.warnings].map((n, i) => <li key={`${i}-${n}`}>{n}</li>)}
               </ul>
             </section>
           )}

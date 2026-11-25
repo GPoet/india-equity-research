@@ -3,6 +3,7 @@ in-memory caches so the dashboard stays fast and NSE is not hammered."""
 
 from __future__ import annotations
 
+import logging
 import threading
 import time
 from collections.abc import Callable
@@ -16,13 +17,18 @@ from eqr.sectors.view import build_stats, sector_picture
 from eqr.sources.prices import history
 
 T = TypeVar("T")
+log = logging.getLogger(__name__)
 VALUATION_TTL = 15 * 60
 SECTOR_TTL = 6 * 3600
 INDEX_DAYS = 400
 
 
+FAILURE_TTL = 45  # a failed lookup is remembered briefly so waiters don't each retry it
+
+
 class _Memo:
-    """TTL cache with a lock per key, so concurrent requests never duplicate heavy work."""
+    """TTL cache with a lock per key, so concurrent requests never duplicate heavy work.
+    Failures are cached for FAILURE_TTL seconds and re-raised to queued waiters."""
 
     def __init__(self) -> None:
         self._data: dict[str, tuple[float, Any]] = {}
@@ -34,11 +40,25 @@ class _Memo:
             lock = self._locks.setdefault(key, threading.Lock())
         with lock:
             hit = self._data.get(key)
-            if hit and time.time() - hit[0] < ttl:
-                return hit[1]
-            value = make()
+            if hit:
+                stamp, value = hit
+                if isinstance(value, _Failure):
+                    if time.time() - stamp < FAILURE_TTL:
+                        raise value.exc
+                elif time.time() - stamp < ttl:
+                    return value
+            try:
+                value = make()
+            except Exception as exc:
+                self._data[key] = (time.time(), _Failure(exc))
+                raise
             self._data[key] = (time.time(), value)
             return value
+
+
+class _Failure:
+    def __init__(self, exc: Exception) -> None:
+        self.exc = exc
 
 
 def _series(f: Fundamentals) -> dict[str, list[dict[str, Any]]]:
@@ -91,8 +111,14 @@ class LiveServices:
         return self.ctx.resolver.by_symbol(symbol) is not None
 
     def _industry(self, symbol: str) -> str | None:
-        anns = announcements(self.ctx, symbol, date.today())
-        return anns[0].industry if anns else None
+        """NSE's industry label, taken from the company's announcements. Only a label: if the
+        lookup fails or the company filed nothing recently, return None rather than fail."""
+        try:
+            anns = announcements(self.ctx, symbol, date.today())
+        except Exception as exc:  # noqa: BLE001 - optional data must not break the page
+            log.warning("Industry lookup for %s failed: %s", symbol, exc)
+            return None
+        return next((a.industry for a in anns if a.industry), None)
 
     def company(self, symbol: str) -> dict[str, Any]:
         def make() -> dict[str, Any]:

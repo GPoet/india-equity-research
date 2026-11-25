@@ -13,10 +13,16 @@ type Props = {
 // today's price as a needle. Width-independent SVG (viewBox), labels in rupees.
 export function ValueScale({ price, low, mid, high, buyBelow, values }: Props) {
   const all = [price, low, high, buyBelow, ...values.map((v) => v.value)].filter((v) => Number.isFinite(v));
-  const min = Math.min(...all) * 0.92;
-  const max = Math.max(...all) * 1.05;
+  const lo = Math.min(...all);
+  const hi = Math.max(...all);
+  const pad = (hi - lo || Math.abs(hi) || 1) * 0.06; // works for equal, zero and negative values
+  const min = lo - pad;
+  const max = hi + pad;
   const W = 1000;
   const x = (v: number) => 20 + ((v - min) / (max - min)) * (W - 40);
+  // Keep the price label inside the drawing when the price sits near either edge.
+  const px = x(price);
+  const priceAnchor = px < 140 ? "start" : px > W - 140 ? "end" : "middle";
   const bandY = 58;
 
   return (
@@ -33,7 +39,7 @@ export function ValueScale({ price, low, mid, high, buyBelow, values }: Props) {
       ))}
       <line x1={x(buyBelow)} x2={x(buyBelow)} y1={bandY - 22} y2={bandY + 40} stroke="var(--tailwind)" strokeWidth={2} strokeDasharray="4 3" />
       <line x1={x(price)} x2={x(price)} y1={14} y2={bandY + 30} stroke="var(--ink)" strokeWidth={3} />
-      <text x={x(price)} y={10} textAnchor="middle" className="tick-label">Price {rupees(price)}</text>
+      <text x={px} y={10} textAnchor={priceAnchor} className="tick-label">Price {rupees(price)}</text>
       <text x={x(low)} y={bandY + 36} textAnchor="middle">{rupees(low)}</text>
       <text x={x(high)} y={bandY + 36} textAnchor="middle">{rupees(high)}</text>
     </svg>

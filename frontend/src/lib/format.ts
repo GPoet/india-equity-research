@@ -5,14 +5,19 @@ const inr2 = new Intl.NumberFormat("en-IN", { minimumFractionDigits: 2, maximumF
 
 export const CRORE = 1e7;
 
+// Negative amounts read "−₹1,234", never "₹-1,234".
+function signed(abs: string, negative: boolean): string {
+  return (negative ? "−₹" : "₹") + abs;
+}
+
 export function rupees(x: number | null | undefined, decimals = false): string {
   if (x === null || x === undefined || !Number.isFinite(x)) return "–";
-  return "₹" + (decimals ? inr2 : inr).format(x);
+  return signed((decimals ? inr2 : inr).format(Math.abs(x)), x < 0);
 }
 
 export function crore(x: number | null | undefined): string {
   if (x === null || x === undefined || !Number.isFinite(x)) return "–";
-  return "₹" + inr.format(x / CRORE) + " cr";
+  return signed(inr.format(Math.abs(x) / CRORE), x < 0) + " cr";
 }
 
 export function pct(x: number | null | undefined, signed = false, digits = 1): string {

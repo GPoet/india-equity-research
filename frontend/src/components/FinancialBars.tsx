@@ -7,7 +7,7 @@ export function FinancialBars({ years, isBank }: { years: YearRow[]; isBank: boo
   if (rows.length === 0) return <p className="muted">No annual figures available.</p>;
   const W = 760;
   const H = 220;
-  const top = Math.max(...rows.map((y) => y.revenue ?? 0));
+  const top = Math.max(0, ...rows.map((y) => Math.max(y.revenue ?? 0, y.profit ?? 0)));
   const minProfit = Math.min(0, ...rows.map((y) => y.profit ?? 0));
   const span = top - minProfit || 1;
   const zero = 20 + (top / span) * (H - 50);
@@ -25,16 +25,19 @@ export function FinancialBars({ years, isBank }: { years: YearRow[]; isBank: boo
         {rows.map((y, i) => {
           const cx = 20 + slot * i + slot / 2;
           const r = y.revenue ?? 0;
-          const p = y.profit ?? 0;
+          const p = y.profit; // missing profit draws no bar, never a zero bar
           return (
             <g key={y.fy_end}>
               <rect x={cx - bw - 1} y={yOf(r)} width={bw} height={Math.max(zero - yOf(r), 0)} fill="var(--rule-strong)">
                 <title>{`${fyLabel(y.fy_end)} ${isBank ? "total income" : "revenue"} ${crore(r)}`}</title>
               </rect>
-              <rect x={cx + 1} y={p >= 0 ? yOf(p) : zero} width={bw} height={Math.abs(yOf(p) - zero)}
-                fill={p >= 0 ? "var(--accent)" : "var(--headwind)"}>
-                <title>{`${fyLabel(y.fy_end)} profit ${crore(p)}`}</title>
-              </rect>
+              {p !== null && (
+                <rect x={cx + 1} y={p >= 0 ? yOf(p) : zero} width={bw} height={Math.abs(yOf(p) - zero)}
+                  fill={p >= 0 ? "var(--accent)" : "var(--headwind)"} strokeDasharray={p < 0 ? "3 2" : undefined}
+                  stroke={p < 0 ? "var(--ink)" : undefined}>
+                  <title>{`${fyLabel(y.fy_end)} ${p < 0 ? "loss" : "profit"} ${crore(p)}`}</title>
+                </rect>
+              )}
               <text x={cx} y={H - 8} textAnchor="middle">{fyLabel(y.fy_end)}</text>
             </g>
           );

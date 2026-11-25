@@ -38,7 +38,9 @@ export function SectorPanel({ symbol }: { symbol: string }) {
       {!data && !error && <p className="muted">Loading sector data…</p>}
       {data && !data.picture.sector && (
         <p className="muted">
-          No sector index matches NSE&apos;s industry label &ldquo;{data.industry ?? "unknown"}&rdquo;.
+          {data.industry
+            ? <>No sector index matches NSE&apos;s industry label &ldquo;{data.industry}&rdquo;.</>
+            : "NSE did not report an industry for this company recently, so it has no sector view."}
         </p>
       )}
       {data?.picture.sector && (
