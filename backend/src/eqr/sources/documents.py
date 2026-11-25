@@ -12,7 +12,6 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from pypdf import PdfReader
-from pypdf.errors import PdfReadError
 
 from eqr.cache import Cache
 from eqr.nse_client import NseClient, NseError
@@ -50,12 +49,20 @@ class DocExcerpt:
     pages: int
 
 
+MIN_PAGES_FOR_STRIP = 4
+MIN_REPEATS = 3
+PER_CATEGORY = 2
+_CALL = "Analysts/Institutional Investor Meet/Con. Call Updates"
+
+
 def strip_repeated_lines(pages: Sequence[str]) -> str:
-    """Drop lines that repeat on most pages (letterheads, footers, page furniture)."""
+    """Drop lines that repeat on most pages (letterheads, footers, page furniture).
+    Only for longer documents: in a 2-3 page results filing, row labels such as
+    "Total income" legitimately repeat across the standalone and consolidated tables."""
     page_lines = [[ln.strip() for ln in p.splitlines() if ln.strip()] for p in pages]
-    if len(page_lines) > 1:
+    if len(page_lines) >= MIN_PAGES_FOR_STRIP:
         counts = Counter(ln for lines in page_lines for ln in set(lines))
-        cutoff = max(2, len(page_lines) // 2)
+        cutoff = max(MIN_REPEATS, len(page_lines) // 2)
         page_lines = [[ln for ln in lines if counts[ln] < cutoff] for lines in page_lines]
     return "\n".join(ln for lines in page_lines for ln in lines)
 
@@ -63,20 +70,39 @@ def strip_repeated_lines(pages: Sequence[str]) -> str:
 def extract_pdf_text(data: bytes, max_pages: int = MAX_PAGES) -> tuple[str, int]:
     reader = PdfReader(io.BytesIO(data))
     pages = [(p.extract_text() or "") for p in reader.pages[:max_pages]]
-    return strip_repeated_lines(pages), len(reader.pages)
+    text = strip_repeated_lines(pages)
+    # pypdf can emit lone surrogates, which break sqlite and UTF-8 stdin.
+    return text.encode("utf-8", "replace").decode("utf-8"), len(reader.pages)
+
+
+def _is_intimation(a: Announcement) -> bool:
+    """Analyst-meet filings are mostly schedules; only transcripts and recordings carry content."""
+    text = a.text.lower()
+    return (
+        a.category == _CALL
+        and "transcript" not in text
+        and ("intimation" in text or "schedule" in text)
+    )
 
 
 def select_documents(anns: Sequence[Announcement], max_docs: int = 6) -> list[Announcement]:
+    """Best filings to read: by category priority, newest first, at most two per category,
+    so one busy category (analyst-meet notices) cannot crowd out results and acquisitions."""
     rank = {cat: i for i, cat in enumerate(PRIORITY)}
     candidates = [
-        a for a in anns if a.url and a.url.lower().endswith(".pdf") and a.category in rank
+        a
+        for a in anns
+        if a.url and a.url.lower().endswith(".pdf") and a.category in rank and not _is_intimation(a)
     ]
     candidates.sort(key=lambda a: (rank[a.category], -a.when.timestamp()))
-    picked, seen = [], set()
+    picked: list[Announcement] = []
+    seen: set[str] = set()
+    per_category: Counter[str] = Counter()
     for a in candidates:
-        if a.url in seen:
+        if a.url in seen or per_category[a.category] >= PER_CATEGORY:
             continue
-        seen.add(a.url)
+        seen.add(a.url)  # type: ignore[arg-type]
+        per_category[a.category] += 1
         picked.append(a)
         if len(picked) == max_docs:
             break
@@ -97,8 +123,11 @@ def fetch_documents(
         else:
             try:
                 text, pages = extract_pdf_text(client.get_bytes(a.url))
-            except (NseError, PdfReadError, ValueError) as exc:
-                log.warning("Could not read %s: %s", a.url, exc)
+            except NseError as exc:
+                log.warning("Could not download %s: %s", a.url, exc)
+                continue
+            except Exception as exc:  # pypdf raises many types; one bad PDF must not stop the run
+                log.warning("Could not read %s: %s: %s", a.url, type(exc).__name__, exc)
                 continue
             cache.set(key, f"{pages}\n{text}", ttl=None)  # filed documents do not change
         if len(text) < MIN_USEFUL_CHARS:

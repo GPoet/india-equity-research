@@ -14,8 +14,14 @@ def _cr(x: float | None) -> str:
 
 
 def _yoy(now: float | None, then: float | None) -> str:
-    if now is None or then is None or then <= 0:
+    if now is None or then is None:
         return ""
+    if then <= 0 < now:
+        return " (turned to profit from a loss a year ago)"
+    if now <= 0 < then:
+        return " (swung to a loss from a profit a year ago)"
+    if then <= 0:
+        return " (loss in both periods)"
     return f" ({now / then - 1:+.0%} YoY)"
 
 
@@ -39,8 +45,10 @@ def build_brief(
     a, r = v.assumptions, v.result
     if a.get("market_cap"):
         facts["Market cap"] = _cr(a["market_cap"])
-    if a.get("eps_ttm"):
+    if a.get("eps_ttm") and a["eps_ttm"] > 0:
         facts["P/E (trailing)"] = f"{v.price / a['eps_ttm']:.1f}"
+    elif a.get("eps_ttm") is not None:
+        facts["P/E (trailing)"] = "not meaningful (loss over the last 12 months)"
     facts["Company type"] = v.company_type
     if r.mid is not None:
         facts["Our valuation"] = (

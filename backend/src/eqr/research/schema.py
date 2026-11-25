@@ -115,6 +115,35 @@ def _is_url(value: str | None) -> bool:
     return bool(value) and value.startswith(("https://", "http://")) and "." in value  # type: ignore[union-attr]
 
 
+def _url_keys(url: str) -> tuple[str, str]:
+    """Comparable forms of a URL: (host+path+query, host+path), ignoring scheme, www,
+    trailing slashes and fragments."""
+    u = url.strip().split("#")[0]
+    u = u.split("://", 1)[-1]
+    if u.lower().startswith("www."):
+        u = u[4:]
+    host, _, rest = u.partition("/")
+    path, _, query = rest.partition("?")
+    base = f"{host.lower()}/{path.rstrip('/')}"
+    return (f"{base}?{query}" if query else base), base
+
+
+def url_verifier(allowed: set[str] | frozenset[str] | None):
+    """Returns a predicate: was this URL actually seen (tool results, fetched pages, our NSE
+    documents)? With allowed=None, any well-formed URL passes."""
+    if allowed is None:
+        return _is_url
+    keys = {k for u in allowed for k in _url_keys(u)}
+
+    def seen(url: str | None) -> bool:
+        if not _is_url(url):
+            return False
+        full, base = _url_keys(url)  # type: ignore[arg-type]
+        return full in keys or base in keys
+
+    return seen
+
+
 def _parse(day: str | None) -> date | None:
     try:
         return date.fromisoformat(day) if day else None
@@ -122,38 +151,72 @@ def _parse(day: str | None) -> date | None:
         return None
 
 
-def clean_report(report: ResearchReport, today: date) -> tuple[ResearchReport, dict[str, int]]:
-    """Apply the sourcing rules. Returns the cleaned report and counts of what was dropped."""
-    dropped = {"unsourced": 0, "future_dated": 0, "duplicate": 0}
-    seen: set[tuple[str, str]] = set()
+def clean_report(
+    report: ResearchReport, today: date, allowed_urls: set[str] | frozenset[str] | None = None
+) -> tuple[ResearchReport, dict[str, int]]:
+    """Apply the sourcing rules. Returns the cleaned report and counts of what was dropped.
+
+    allowed_urls: URLs the model's tools actually returned or fetched, plus the NSE documents
+    we supplied. When given, items citing any other URL are dropped as unverified: the model
+    may have invented them.
+    """
+    dropped = {
+        "unsourced": 0,
+        "unverified_url": 0,
+        "future_dated": 0,
+        "duplicate": 0,
+        "stale_event": 0,
+    }
+    seen_url = url_verifier(allowed_urls)
+    seen_items: set[tuple[str, str]] = set()
 
     def keep(url: str | None, title: str, happened: str | None) -> bool:
         if not _is_url(url):
             dropped["unsourced"] += 1
+            return False
+        if not seen_url(url):
+            dropped["unverified_url"] += 1
             return False
         when = _parse(happened)
         if when and when > today:
             dropped["future_dated"] += 1
             return False
         key = (url or "", title.strip().lower())
-        if key in seen:
+        if key in seen_items:
             dropped["duplicate"] += 1
             return False
-        seen.add(key)
+        seen_items.add(key)
         return True
 
     catalysts = [c for c in report.catalysts if keep(c.source_url, c.title, c.date)]
     regulation = [r for r in report.regulation if keep(r.source_url, r.title, r.announced_date)]
-    risks = [r for r in report.risks if r.source_url is None or _is_url(r.source_url)]
-    sector = report.sector_view.model_copy(
-        update={"source_urls": [u for u in report.sector_view.source_urls if _is_url(u)]}
-    )
+    risks = []
+    for r in report.risks:
+        if r.source_url is None or seen_url(r.source_url):
+            risks.append(r)
+        else:
+            dropped["unverified_url"] += 1
+    events = []
+    for e in report.events:
+        when = _parse(e.date)
+        if (e.date and when is None) or (when and when < today):
+            dropped["stale_event"] += 1  # unparseable or already past: not an upcoming event
+            continue
+        events.append(
+            e.model_copy(update={"source_url": e.source_url if seen_url(e.source_url) else None})
+        )
+    sector_urls = [u for u in report.sector_view.source_urls if seen_url(u)]
+    gaps = list(report.data_gaps)
+    if not sector_urls:
+        gaps.append("Sector view has no verified source; treat it as the model's opinion")
     cleaned = report.model_copy(
         update={
             "catalysts": catalysts,
             "regulation": regulation,
             "risks": risks,
-            "sector_view": sector,
+            "events": events,
+            "sector_view": report.sector_view.model_copy(update={"source_urls": sector_urls}),
+            "data_gaps": gaps,
         }
     )
     return cleaned, dropped

@@ -106,3 +106,49 @@ def test_bad_materiality_rejected() -> None:
 
     with pytest.raises(ValidationError):
         ResearchReport.model_validate(report(catalysts=[item(materiality=9)]))
+
+
+def test_urls_not_seen_by_tools_are_dropped() -> None:
+    raw = report(
+        catalysts=[item(), item(title="Made up", source_url="https://economictimes.com/fake-story")]
+    )
+    allowed = {"https://www.nseindia.com/x"}
+    cleaned, dropped = clean_report(
+        ResearchReport.model_validate(raw), today=date(2026, 11, 25), allowed_urls=allowed
+    )
+    assert [c.title for c in cleaned.catalysts] == ["Order win"]
+    assert dropped["unverified_url"] == 1
+
+
+def test_url_match_tolerates_www_slash_and_query() -> None:
+    raw = report(catalysts=[item(source_url="https://nseindia.com/x/?utm=1")])
+    cleaned, _ = clean_report(
+        ResearchReport.model_validate(raw),
+        today=date(2026, 11, 25),
+        allowed_urls={"https://www.nseindia.com/x"},
+    )
+    assert len(cleaned.catalysts) == 1
+
+
+def test_past_and_invalid_events_dropped() -> None:
+    events = [
+        {"date": "2026-10-01", "event": "old", "source_url": None},
+        {"date": "2026-13-45", "event": "bad", "source_url": None},
+        {"date": "2026-12-05", "event": "RBI policy", "source_url": None},
+        {"date": None, "event": "Q3 results, date not announced", "source_url": None},
+    ]
+    cleaned, dropped = clean_report(
+        ResearchReport.model_validate(report(events=events)), today=date(2026, 11, 25)
+    )
+    assert [e.event for e in cleaned.events] == ["RBI policy", "Q3 results, date not announced"]
+    assert dropped["stale_event"] == 2
+
+
+def test_sector_view_without_verified_source_is_flagged() -> None:
+    cleaned, _ = clean_report(
+        ResearchReport.model_validate(report()),
+        today=date(2026, 11, 25),
+        allowed_urls={"https://www.nseindia.com/x"},
+    )
+    assert cleaned.sector_view.source_urls == []
+    assert any("Sector view" in g for g in cleaned.data_gaps)

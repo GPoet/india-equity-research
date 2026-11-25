@@ -17,6 +17,7 @@ def test_strip_repeated_lines_removes_letterhead() -> None:
         f"{HEADER}\nRevenue grew 5%\nPage 1",
         f"{HEADER}\nMargins held\nPage 2",
         f"{HEADER}\nOutlook steady",
+        f"{HEADER}\nCapex plan",
     ]
     text = strip_repeated_lines(pages)
     assert HEADER not in text
@@ -48,3 +49,50 @@ def test_select_skips_duplicate_urls() -> None:
         ann("Outcome of Board Meeting", 14, "https://a/q.pdf"),
     ]
     assert len(select_documents(anns, max_docs=5)) == 1
+
+
+def test_short_filing_keeps_repeated_row_labels() -> None:
+    # Standalone and consolidated tables repeat labels across 2-3 pages: keep them.
+    pages = ["Total income 100\nProfit before tax 20", "Total income 300\nProfit before tax 60"]
+    text = strip_repeated_lines(pages)
+    assert text.count("Total income") == 2
+
+
+def test_at_most_two_per_category_and_intimations_skipped() -> None:
+    call = "Analysts/Institutional Investor Meet/Con. Call Updates"
+    anns = [
+        Announcement(
+            "TCS",
+            datetime(2026, 11, d),
+            call,
+            "Intimation of schedule of analyst meet",
+            f"https://a/i{d}.pdf",
+            None,
+        )
+        for d in range(1, 8)
+    ]
+    anns.append(
+        Announcement(
+            "TCS",
+            datetime(2026, 10, 20),
+            call,
+            "Transcript of the earnings call",
+            "https://a/t.pdf",
+            None,
+        )
+    )
+    anns.append(
+        Announcement(
+            "TCS",
+            datetime(2026, 10, 9),
+            "Outcome of Board Meeting",
+            "Results",
+            "https://a/r.pdf",
+            None,
+        )
+    )
+    picked = select_documents(anns, max_docs=6)
+    urls = {a.url for a in picked}
+    assert "https://a/t.pdf" in urls and "https://a/r.pdf" in urls
+    assert sum(a.category == call for a in picked) <= 2
+    assert not any("/i" in u for u in urls)
