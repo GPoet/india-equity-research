@@ -200,12 +200,20 @@ Phase 5, sectors (`backend/src/eqr/sectors/`, `scripts/sectors.py`): NSE's offic
 
 Phase 4 (Grok sentiment) is blocked on an xAI API key; no grok CLI on this machine.
 
+## 12d. Phase 4 and 7 status (25-26 Nov 2026)
+
+- Bank asset quality (GNPA/NNPA/CET1) from standalone filings; promoter holding, pledges and institutional ownership from NSE shareholding XBRL; holding companies detected from filings.
+- Track record: forward journal (every dashboard valuation, scored at 1/3/6/12 months vs Nifty 50) and a point-in-time backtest of the valuation engine on today's Nifty 50, quarterly from Aug 2021 (`scripts/backtest.py`), with its limits stated on the page.
+- X sentiment via Grok (xAI Responses API, x_search) is built and tested; it switches on when `XAI_API_KEY` is added to `backend/.env`, with a monthly spend cap (default $10).
+
+Not built: 10-year history beyond NSE's 2018 XBRL start (Coffee Can runs on fewer years); sum-of-the-parts valuation for holding companies (flagged only); FPI flows by sector (NSDL).
+
 ## 13. Open decisions
 
 1. Prices: DECIDED 25 Nov 2026: yfinance (free, delayed). Kite Connect stays available as a drop-in adapter later.
 2. Claude path: DECIDED 25 Nov 2026: own subscription via `claude -p` / Agent SDK, run locally. API key kept as a later switch behind the provider interface.
-3. Grok: xAI API key with a monthly cap?
-4. Stack: Next.js + FastAPI (recommended), or all-Python with Streamlit (faster to build, plainer UI)?
+3. Grok: DECIDED 25 Nov 2026: xAI key to be added by the user to backend/.env; monthly cap XAI_MONTHLY_BUDGET_USD (default $10).
+4. Stack: DECIDED 25 Nov 2026: Next.js + FastAPI.
 
 ## Sources
 

@@ -4,7 +4,7 @@ Paste a link, company name or ticker; get financials, valuation, news, sentiment
 
 ## Status
 
-Phases 0-3, 5 and 6 done: data layer, valuation engine, Claude research agent, sector view, dashboard. Grok sentiment (waiting for an xAI key) and the track-record journal not built yet. Formulas: [docs/FORMULAS.md](docs/FORMULAS.md).
+All phases built: data layer, valuation engine, Claude research, sectors, dashboard, track record (journal + backtest), and X sentiment via Grok, which turns on when you add an xAI key (see below). Formulas: [docs/FORMULAS.md](docs/FORMULAS.md).
 
 ## Run the dashboard
 
@@ -13,6 +13,14 @@ Two terminals:
 ```bash
 cd backend && uv run python scripts/run_api.py      # API on 127.0.0.1:8000
 cd frontend && npm install && npm run dev            # dashboard on localhost:3000
+```
+
+To turn on X sentiment: copy `backend/.env.example` to `backend/.env` and set `XAI_API_KEY` (and optionally `XAI_MONTHLY_BUDGET_USD`, default 10). Restart the API.
+
+Run the history test (first run downloads every Nifty 50 company's filings, so it is slow; resumable):
+
+```bash
+cd backend && uv run python scripts/backtest.py
 ```
 
 Open http://localhost:3000, type a company name or ticker, or paste a Screener, Moneycontrol, Tickertape, Groww, BSE, NSE or Yahoo link. Research runs on your local Claude Code login.

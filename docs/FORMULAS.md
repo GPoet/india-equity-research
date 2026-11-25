@@ -45,6 +45,13 @@ Rates are from `backend/config/market_inputs.toml` (dated, with sources).
 | Earnings yield vs bonds | Buffett, the "Fed model" | Earnings / price against the 10-year G-sec | |
 | ROIC vs WACC | Buffett, Munger, Mauboussin | Whether returns on capital beat the cost of capital (a moat) | |
 
+| Bank asset quality | RBI prudential norms | Gross NPA, net NPA and CET1 capital from the standalone filing | Strong: GNPA under 2%, NNPA under 1%, CET1 12%+. Weak: GNPA over 5%, NNPA over 2% or CET1 under 9% |
+| Promoter holding and pledges | Indian market practice | Promoter stake and its change over a year, share of promoter shares pledged, institutional holdings, from the NSE shareholding pattern | Red flag: 25%+ of promoter shares pledged, or promoter stake down 2+ points in a year |
+
+## Holding companies
+
+Detected from the filings (NSE labels them just "Finance"): half or more of profit from associates and joint ventures, or 70%+ of assets in investments. Their value is the market value of their stakes, so the report says a sum-of-the-parts is the right method and drops confidence to low.
+
 ## How the fair value is combined
 
 | Company type | Weights |
