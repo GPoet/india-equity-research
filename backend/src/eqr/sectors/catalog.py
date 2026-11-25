@@ -7,6 +7,7 @@ measured correlation next to every link so a weak link is visible, not hidden.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 BENCHMARK = "Nifty 50"
@@ -174,80 +175,168 @@ LINKS: dict[str, list[tuple[str, str]]] = {
     "sugar": [("oil_gas", "ethanol blending"), ("fmcg", "sweetener demand")],
 }
 
-PSU_BANKS = (
-    "state bank",
-    "bank of baroda",
-    "punjab national",
-    "canara",
-    "union bank",
-    "indian bank",
-    "bank of india",
-    "central bank",
-    "uco bank",
-    "indian overseas",
-    "bank of maharashtra",
-    "punjab & sind",
-    "punjab and sind",
+# Exact names of government-owned (PSU) banks, normalised by _norm_name.
+PSU_BANKS = frozenset(
+    {
+        "state bank of india",
+        "bank of baroda",
+        "punjab national bank",
+        "canara bank",
+        "union bank of india",
+        "indian bank",
+        "bank of india",
+        "central bank of india",
+        "uco bank",
+        "indian overseas bank",
+        "bank of maharashtra",
+        "punjab & sind bank",
+        "punjab and sind bank",
+    }
 )
 
-# (keywords in the NSE industry text, sector). First match wins, so order matters.
+# (phrases, sector). Whole-word matching (a trailing "s" allowed); first match wins, so
+# specific rules sit above general ones: "NBFC" before "bank", "banking software" before
+# "bank", "industrial automation" before "auto", "hospitality" before "hospital".
 _RULES: list[tuple[tuple[str, ...], str]] = [
-    (("housing finance",), "housing_finance"),
+    (("housing finance", "finance - housing", "home finance"), "housing_finance"),
     (("microfinance", "small finance bank"), "microfinance"),
     (("insurance",), "insurance"),
-    (("bank",), "private_bank"),  # PSU split by name below
+    (("nbfc", "non banking", "non-banking"), "nbfc"),
     (
-        ("stock broking", "asset management", "exchange", "depositor", "capital market"),
+        ("stock broking", "broking", "asset management", "exchange", "depositor", "capital market"),
         "capital_markets",
     ),
-    (("finance", "nbfc", "financial services", "investment company", "holding"), "nbfc"),
-    (("software", "computers", "it enabled", "it services"), "it"),
-    (("telecom",), "telecom"),
-    (("media", "entertainment", "broadcasting", "film"), "media"),
-    (("e-commerce", "internet"), "internet"),
-    (("pharma", "drug"), "pharma"),
-    (("hospital", "healthcare"), "hospitals"),
-    (("sugar",), "sugar"),
-    (("edible oil", "vanaspati"), "fmcg"),  # before the oil & gas rule
     (
-        ("consumer durables", "electronics", "household appliances", "furniture"),
-        "consumer_durables",
+        ("banking software", "software", "computers", "it enabled", "it services", "it consulting"),
+        "it",
     ),
-    (("retail",), "retail"),
-    (("hotel", "travel", "airline", "aviation"), "tourism"),
-    (("auto", "tyre", "two wheeler", "passenger car", "commercial vehicle"), "auto"),
-    (("steel", "iron", "metal", "aluminium", "copper", "zinc", "mining", "coal"), "metal"),
-    (("cement",), "cement"),
-    (("chemical", "fertili", "pesticide", "agrochemical", "paint"), "chemicals"),
-    (("refiner", "oil", "gas", "petroleum"), "oil_gas"),
-    (("power",), "power"),
-    (("defence", "aerospace", "ship building"), "defence"),
-    (("railway",), "railways"),
+    (("bank", "banking"), "private_bank"),  # PSU split by exact name below
+    (("finance", "financial services", "investment company", "holding company"), "nbfc"),
+    (("telecom", "telecommunication"), "telecom"),
+    (("media", "entertainment", "broadcasting", "film", "publishing"), "media"),
+    (("e-commerce", "internet"), "internet"),
+    (("hospitality", "hotel", "travel", "airline", "aviation", "tourism"), "tourism"),
+    (("hospital", "healthcare services", "healthcare facilities"), "hospitals"),
+    (("retail", "retailing"), "retail"),
+    (("pharma", "pharmaceutical", "drug"), "pharma"),
+    (("sugar",), "sugar"),
+    (("edible oil", "vanaspati"), "fmcg"),
+    (("consumer services",), "consumer_services"),
     (
         (
-            "engineering",
-            "capital goods",
+            "consumer durable",
+            "consumer electronics",
+            "electronics",
+            "household appliance",
+            "furniture",
+        ),
+        "consumer_durables",
+    ),
+    (
+        (
+            "industrial automation",
+            "power equipment",
+            "transmission equipment",
+            "electric equipment",
             "electrical equipment",
-            "industrial",
+            "heavy electrical",
+            "capital goods",
+            "engineering",
+            "industrial machinery",
             "machinery",
-            "cables",
+            "cable",
+            "compressor",
+            "pump",
         ),
         "capital_goods",
     ),
-    (("construction", "infrastructure"), "construction"),
+    (("electric vehicle",), "ev"),
+    (
+        (
+            "automobile",
+            "auto component",
+            "auto ancillar",
+            "auto",
+            "tyre",
+            "two wheeler",
+            "passenger car",
+            "commercial vehicle",
+            "tractor",
+        ),
+        "auto",
+    ),
+    (
+        ("steel", "iron", "metal", "aluminium", "copper", "zinc", "mining", "coal", "ferro alloy"),
+        "metal",
+    ),
+    (("cement",), "cement"),
+    (
+        (
+            "chemical",
+            "fertiliser",
+            "fertilizer",
+            "pesticide",
+            "agrochemical",
+            "paint",
+            "dye",
+            "pigment",
+        ),
+        "chemicals",
+    ),
+    (
+        (
+            "refinery",
+            "refineries",
+            "oil exploration",
+            "oil",
+            "gas",
+            "petroleum",
+            "lpg",
+            "lubricant",
+        ),
+        "oil_gas",
+    ),
+    (("power", "electric utilit"), "power"),
+    (("defence", "aerospace", "ship building", "shipbuilding"), "defence"),
+    (("railway",), "railways"),
+    (("construction", "infrastructure", "civil", "epc"), "construction"),
     (("realty", "real estate"), "realty"),
-    (("logistic", "shipping", "port", "transport", "courier"), "logistics"),
-    (("fmcg", "personal care", "food", "beverage", "tobacco", "dairy", "consumer"), "fmcg"),
+    (("logistic", "shipping", "port", "transport", "courier", "freight"), "logistics"),
+    (
+        (
+            "fmcg",
+            "personal care",
+            "cosmetic",
+            "toiletries",
+            "food",
+            "beverage",
+            "tobacco",
+            "dairy",
+            "household product",
+            "consumer",
+        ),
+        "fmcg",
+    ),
 ]
+_COMPILED = [
+    (re.compile("|".join(rf"\b{re.escape(p)}(?:s|es)?\b" for p in phrases)), sector)
+    for phrases, sector in _RULES
+]
+
+
+def _norm_name(name: str) -> str:
+    n = re.sub(r"\b(limited|ltd)\b\.?", "", name.lower()).strip()
+    n = re.sub(r"^the\s+", "", n)
+    return re.sub(r"\s+", " ", n).strip(" .,")
 
 
 def sector_for_industry(industry: str | None, company_name: str = "") -> str | None:
     if not industry:
         return None
     text = industry.lower()
-    for keywords, sector in _RULES:
-        if any(k in text for k in keywords):
-            if sector == "private_bank" and any(p in company_name.lower() for p in PSU_BANKS):
+    for pattern, sector in _COMPILED:
+        if pattern.search(text):
+            if sector == "private_bank" and _norm_name(company_name) in PSU_BANKS:
                 return "psu_bank"
             return sector
     return None

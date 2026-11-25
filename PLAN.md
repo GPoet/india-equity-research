@@ -192,6 +192,14 @@ Observation from the 10 test stocks: on CAPM costs of equity (10.5-14.5%) with c
 
 Next: Phase 3 (Claude research agent: news, regulation, catalysts), standalone bank asset-quality ratios, holding-company sum-of-the-parts.
 
+## 12c. Phases 3 and 5 status (25 Nov 2026)
+
+Phase 3, research agent (`backend/src/eqr/research/`, `scripts/research.py`): Claude via the local Claude Code CLI on the user's own login, isolated (temp dir outside HOME, no user settings/hooks/MCP, API-key env vars stripped). Inputs: company facts and our valuation, NSE announcements (120 days), and the text of key filings (results, call transcripts, acquisitions) downloaded and extracted locally because NSE's archive times out for web fetch. Output is a typed report; every catalyst/regulation must cite a URL that Claude's tools actually returned or one of the NSE documents, so invented sources are dropped. A run with no web research is refused. Sonnet takes 1-3 minutes per company; results cached 12 hours.
+
+Phase 5, sectors (`backend/src/eqr/sectors/`, `scripts/sectors.py`): NSE's official daily all-index file (169 indices with P/E) instead of Yahoo, which lacks most sector indices. 32 sectors scored on 3m/6m strength vs Nifty 50 and trend; 13 indices only exist since 2026 and are marked "short history". Related sectors = curated economic links (with reasons) plus co-movement after removing the market, each with its measured correlation.
+
+Phase 4 (Grok sentiment) is blocked on an xAI API key; no grok CLI on this machine.
+
 ## 13. Open decisions
 
 1. Prices: DECIDED 25 Nov 2026: yfinance (free, delayed). Kite Connect stays available as a drop-in adapter later.

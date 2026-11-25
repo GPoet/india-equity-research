@@ -30,7 +30,8 @@ def line(s: SectorStat) -> str:
     pe = "-" if s.pe is None else f"{s.pe:5.1f}"
     return (
         f"  {s.rank:>2}. {s.label[:34]:34} {s.stance:23} 3m {pct(s.rs_3m)}  6m {pct(s.rs_6m)}  "
-        f"vs200d {pct(s.vs_200dma)}  P/E {pe} ({pct(s.pe_premium)} vs 1y median)"
+        f"trend {pct(s.vs_200dma)}  P/E {pe}"
+        + ("" if s.pe_premium is None else f" ({pct(s.pe_premium)} vs its 1y median)")
     )
 
 
@@ -42,7 +43,10 @@ def main(args: list[str]) -> int:
     print(
         f"NSE index data: {closes.index[0].date()} to {closes.index[-1].date()} ({len(closes)} trading days)"
     )
-    print("Relative strength = return minus the Nifty 50's over the same period.\n")
+    print(
+        "Relative strength = return minus the Nifty 50's over the same days. Trend = price vs its"
+    )
+    print("200-day average (shorter for indices NSE launched recently, marked 'short history').\n")
     stats = sorted((s for s in build_stats(closes, pe).values() if s.rank), key=lambda s: s.rank)
     print("All sectors, strongest first:")
     for s in stats:
@@ -62,9 +66,13 @@ def main(args: list[str]) -> int:
     print(f"\n=== {sym}: NSE industry '{industry}' -> sector '{key}' ===")
     if pic.sector:
         print(line(pic.sector))
-    print("Related sectors (correlation = weekly moves after removing the market's):")
+    print(
+        "Related sectors (correlation = weekly moves after removing each sector's market exposure):"
+    )
     for r in pic.related:
         corr = "  n/a" if r.correlation is None else f"{r.correlation:+.2f}"
+        if r.correlation is not None and "short history" in r.stat.stance:
+            corr += " (~5 months of data)"
         print(f"  {r.stat.label[:30]:30} {r.stat.stance:23} corr {corr}  [{r.basis}] {r.why}")
     bullish = [r.stat.label for r in pic.related if r.stat.stance.startswith("bullish")]
     print("Bullish related sectors: " + (", ".join(bullish) or "none right now"))

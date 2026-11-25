@@ -12,11 +12,12 @@ from datetime import date, datetime, timedelta
 import pandas as pd
 
 from eqr.cache import Cache
-from eqr.nse_client import NseClient, NseNotFound
+from eqr.nse_client import NseClient, NseError, NseNotFound
 
 log = logging.getLogger(__name__)
 
 ARCHIVE = "https://nsearchives.nseindia.com/content/indices/"
+MISSING_TTL = 14 * 24 * 3600  # re-check "no file" days for two weeks, in case a 404 was transient
 
 
 @dataclass(frozen=True)
@@ -75,12 +76,16 @@ class IndexHistory:
             if self._cache.get(f"indices-missing:{d.isoformat()}") is not None:
                 return None
             try:
-                text = self._client.get_bytes(index_close_url(d)).decode("utf-8", "replace")
+                raw = self._client.get_bytes(index_close_url(d))
             except NseNotFound:
-                # Holiday or not yet published. Past days are final; today may still appear.
+                # Holiday or not yet published. Remembered for a while, not forever.
                 if d < date.today():
-                    self._cache.set(f"indices-missing:{d.isoformat()}", "1", ttl=None)
+                    self._cache.set(f"indices-missing:{d.isoformat()}", "1", ttl=MISSING_TTL)
                 return None
+            except NseError as exc:
+                log.warning("Index file for %s unavailable: %s", d, exc)
+                return None  # one bad day must not abort the whole history
+            text = raw.decode("utf-8-sig", "replace")
             if not text.startswith("Index Name"):
                 log.warning("Unexpected index file for %s", d)
                 return None
