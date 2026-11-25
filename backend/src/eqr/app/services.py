@@ -8,11 +8,14 @@ import logging
 import threading
 import time
 from collections.abc import Callable
+from dataclasses import asdict
 from datetime import date
 from typing import Any, TypeVar
 
 import yfinance as yf
 
+from eqr.forecast.dataset import observation
+from eqr.forecast.model import ForecastModel, forecast
 from eqr.fundamentals import Fundamentals, owners_profit
 from eqr.journal import HORIZONS, score_entry, summarise, thin
 from eqr.llm.xai import DEFAULT_MODEL, SpendLedger, XaiClient, XaiError
@@ -24,7 +27,8 @@ from eqr.sentiment.agent import run_sentiment
 from eqr.settings import load_env
 from eqr.sources.prices import history
 from eqr.valuation import ENGINE_VERSION
-from eqr.valuation.engine import _dated
+from eqr.valuation.engine import _dated, fetch_market_series
+from eqr.valuation.pricedata import beta_as_of
 
 T = TypeVar("T")
 log = logging.getLogger(__name__)
@@ -215,6 +219,54 @@ class LiveServices:
             "summary": summarise(thin(scored)),  # one call per company per 30 days
             "engine_version": ENGINE_VERSION,
         }
+
+    def forecast(self, symbol: str) -> dict[str, Any]:
+        model = ForecastModel.load()
+        if model is None:
+            return {
+                "status": "not_fitted",
+                "error": "Forecast model not fitted yet: run scripts/forecast_fit.py",
+            }
+
+        def make() -> dict[str, Any]:
+            v = self.company(symbol)["valuation"]
+            r = v["result"]
+            series = fetch_market_series(symbol)
+            pairs = []
+            for ref in self.ctx.filings.list_raw(symbol):
+                try:
+                    pairs.append((ref, self.ctx.filings.fetch(ref)))
+                except Exception as exc:  # noqa: BLE001 - one unreadable filing must not hide the forecast
+                    log.warning("Forecast: %s %s unreadable: %s", symbol, ref.period_end, exc)
+            today = date.today()
+            row = {"upside": r["upside"], "confidence": r["confidence"], "used": list(r["used"])}
+            x = observation(symbol, pairs, series, today, row)
+            if x is None:
+                return {"status": "no_data", "error": "Under a year of prices: no forecast"}
+            beta, _ = beta_as_of(series.closes, series.index_closes, today)
+            market_return = self.ctx.market().cost_of_equity(1.0) / 100
+            return {
+                "status": "ok",
+                "price": v["price"],
+                "price_as_of": v["price_as_of"],
+                "horizons": [
+                    asdict(h) for h in forecast(model, x, v["price"], beta, market_return)
+                ],
+                "inputs": {
+                    k: x.get(k)
+                    for k in ("mom_12_1", "rev_1m", "surprise", "value", "next_results_est")
+                },
+                "beta": beta,
+                "market_return_assumed": market_return,
+                "model": {
+                    "fitted_on": model.fitted_on,
+                    "tested_on": model.tested_on,
+                    "test": model.test,
+                    "has_edge": model.has_edge,
+                },
+            }
+
+        return self._memo.get(f"forecast:{symbol}", VALUATION_TTL, make)
 
     def backtest(self) -> dict[str, Any] | None:
         path = self.ctx.data_dir / "backtest" / "latest.json"

@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 
 import { FinancialBars } from "@/components/FinancialBars";
 import { LensTable } from "@/components/LensTable";
+import { ForecastPanel } from "@/components/ForecastPanel";
 import { OwnershipPanel } from "@/components/OwnershipPanel";
 import { QualityList } from "@/components/QualityList";
 import { ResearchPanel } from "@/components/ResearchPanel";
@@ -120,6 +121,7 @@ export function CompanyView({ symbol }: { symbol: string }) {
           )}
         </div>
         <aside>
+          <ForecastPanel symbol={company.symbol} />
           <SectorPanel symbol={company.symbol} />
           <OwnershipPanel lens={v.lenses.find((l) => l.key === "promoter")} />
           <SentimentPanel symbol={company.symbol} />

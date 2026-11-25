@@ -188,6 +188,41 @@ export type Backtest = {
   };
 };
 
+export type HorizonForecast = {
+  horizon: string;
+  days: number;
+  median: number;
+  band50: [number, number];
+  band80: [number, number];
+  p_up: number;
+  p_beat_nifty: number;
+  expected_excess: number;
+  results_in_window: boolean;
+  lean: string;
+};
+
+export type ForecastTest = {
+  n: number;
+  dates?: number;
+  rank_ic?: number | null;
+  rank_ic_t?: number | null;
+  top_minus_bottom?: number | null;
+  direction_right?: number;
+  base_rate_beat_nifty?: number;
+  coverage_80?: number;
+};
+
+export type Forecast =
+  | { status: "not_fitted" | "no_data"; error: string }
+  | {
+      status: "ok";
+      price: number;
+      price_as_of: string;
+      horizons: HorizonForecast[];
+      inputs: { mom_12_1: number; rev_1m: number; surprise: number | null; value: number | null; next_results_est: string | null };
+      model: { fitted_on: string; tested_on: string; test: Record<string, ForecastTest>; has_edge: Record<string, boolean> };
+    };
+
 export type Sentiment = {
   symbol: string;
   report: {
@@ -245,6 +280,7 @@ export const api = {
     call<{ points: { date: string; close: number }[] }>(`/api/company/${encodeURIComponent(s)}/prices?period=${period}`),
   sector: (s: string) => call<SectorPicture>(`/api/company/${encodeURIComponent(s)}/sector`),
   sectors: () => call<{ as_of: string; sectors: SectorStat[] }>(`/api/sectors`),
+  forecast: (s: string) => call<Forecast>(`/api/company/${encodeURIComponent(s)}/forecast`),
   sentiment: (s: string) => call<SentimentState>(`/api/company/${encodeURIComponent(s)}/sentiment`),
   startSentiment: (s: string, force = false) =>
     call<SentimentState>(`/api/company/${encodeURIComponent(s)}/sentiment${force ? "?force=true" : ""}`, {

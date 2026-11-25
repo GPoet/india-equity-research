@@ -62,6 +62,9 @@ class FakeServices:
     def backtest(self):
         return None
 
+    def forecast(self, symbol):
+        return {"status": "not_fitted", "error": "run scripts/forecast_fit.py"}
+
     def sentiment_enabled(self):
         return self.xai_on
 
@@ -200,3 +203,8 @@ def test_sentiment_runs_when_enabled(client) -> None:
     assert client.post("/api/company/TCS/sentiment").status_code == 403  # same CSRF guard
     started = client.post("/api/company/TCS/sentiment", headers=H).json()
     assert started["status"] in ("queued", "running", "done")
+
+
+def test_forecast_endpoint(client) -> None:
+    r = client.get("/api/company/TCS/forecast")
+    assert r.status_code == 200 and r.json()["status"] == "not_fitted"
