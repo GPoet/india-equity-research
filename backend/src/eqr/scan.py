@@ -8,11 +8,12 @@ screen, not a prediction. Every day's ranking is saved so it can be scored as ti
 from __future__ import annotations
 
 import logging
-from datetime import date
+from datetime import date, timedelta
 from typing import Any
 
 import pandas as pd
 
+from eqr.backtest import refs_known_on
 from eqr.forecast.dataset import observation
 from eqr.forecast.model import ForecastModel, forecast
 from eqr.fundamentals import load_fundamentals
@@ -21,6 +22,7 @@ from eqr.nse_client import NseError
 from eqr.pipeline import Context, ownership
 from eqr.sources.announcements import Announcement
 from eqr.sources.bhavcopy import DailyBar
+from eqr.sources.filings import FilingRef
 from eqr.valuation.blend import RED_FLAG_VERDICTS
 from eqr.valuation.engine import fetch_market_series, value_company
 from eqr.valuation.pricedata import beta_as_of, price_data_as_of
@@ -100,6 +102,15 @@ def _valuation(
     }
 
 
+def _current_refs(refs: list[FilingRef], day: date) -> list[FilingRef]:
+    """The filings a scan on `day` needs: the latest version of each quarter on the company's
+    main basis (consolidated when it reports one). The same set the valuation already
+    downloaded, so the forecast adds no NSE requests."""
+    known = refs_known_on(refs, day + timedelta(days=1))  # filed up to the end of `day`
+    consolidated = any(r.consolidated for r in known)
+    return [r for r in known if r.consolidated == consolidated]
+
+
 def scan_symbol(
     ctx: Context,
     symbol: str,
@@ -142,7 +153,7 @@ def scan_symbol(
         return row
     pairs = []
     try:
-        refs = ctx.filings.list_raw(symbol)
+        refs = _current_refs(ctx.filings.list_raw(symbol), day)
     except (ValueError, NseError):
         refs = []
     for ref in refs:
