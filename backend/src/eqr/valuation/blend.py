@@ -39,6 +39,8 @@ RED_FLAG_VERDICTS = {
     "beneish_m": {"possible manipulation"},
     "piotroski": {"weak"},
     "roic": {"destroys value"},
+    "bank_asset_quality": {"weak"},
+    "promoter": {"heavy pledge", "promoter selling"},
 }
 
 

@@ -1,7 +1,7 @@
 import type { Lens } from "@/lib/api";
 
-const GOOD = new Set(["strong", "safe", "unlikely manipulator", "passes", "passes so far", "creates value", "beats bonds"]);
-const BAD = new Set(["weak", "distress", "possible manipulation", "fails", "destroys value", "below bonds"]);
+const GOOD = new Set(["strong", "safe", "unlikely manipulator", "passes", "passes so far", "creates value", "beats bonds", "clean", "no promoter"]);
+const BAD = new Set(["weak", "distress", "possible manipulation", "fails", "destroys value", "below bonds", "heavy pledge", "promoter selling"]);
 
 function tone(verdict: string | null): string {
   if (!verdict) return "plain";

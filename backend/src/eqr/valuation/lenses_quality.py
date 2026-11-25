@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import statistics
+from dataclasses import replace
 
 from eqr.fundamentals import YearRow
 from eqr.valuation import formulas as fx
@@ -545,7 +546,126 @@ def roic_vs_wacc(ctx: ValuationContext) -> LensResult:
     )
 
 
+def bank_asset_quality(ctx: ValuationContext) -> LensResult:
+    key, name, school = (
+        "bank_asset_quality",
+        "Bank asset quality and capital",
+        "RBI prudential norms",
+    )
+    if not ctx.f.is_bank:
+        return not_applicable(key, name, school, "score", "Only for banks")
+    aq = ctx.f.asset_quality
+    gnpa, nnpa, cet1 = aq.get("gnpa_pct"), aq.get("nnpa_pct"), aq.get("cet1_pct")
+    if gnpa is None or nnpa is None:
+        return not_applicable(
+            key, name, school, "score", "Asset-quality ratios not in the standalone filing"
+        )
+    weak = gnpa > 0.05 or nnpa > 0.02 or (cet1 is not None and cet1 < 0.09)
+    strong = gnpa < 0.02 and nnpa < 0.01 and (cet1 is None or cet1 >= 0.12)
+    verdict = "weak" if weak else "strong" if strong else "adequate"
+    cet1_text = "n/a" if cet1 is None else f"{cet1:.2%}"
+    period = ctx.f.asset_quality_period
+    return LensResult(
+        key,
+        name,
+        school,
+        "score",
+        True,
+        value=gnpa,
+        verdict=verdict,
+        summary=(
+            f"Gross NPA {gnpa:.2%}, net NPA {nnpa:.2%}, CET1 capital {cet1_text}"
+            f"{f' (quarter to {period})' if period else ''}. Strong: GNPA under 2%, NNPA under 1%, "
+            "CET1 12%+. Weak: GNPA over 5%, NNPA over 2% or CET1 under 9%."
+        ),
+        inputs={
+            "gnpa_pct": gnpa,
+            "nnpa_pct": nnpa,
+            "cet1_pct": cet1,
+            "roa_quarter": aq.get("roa_pct"),
+        },
+    )
+
+
+HEAVY_PLEDGE = 0.25  # share of the promoters' own holding pledged
+PLEDGE_CAUTION = 0.05
+PROMOTER_SELLING = 0.02  # a fall of 2+ percentage points in a year
+
+
+def promoter_and_pledge(ctx: ValuationContext) -> LensResult:
+    key, name, school = "promoter", "Promoter holding and pledges", "Indian market practice"
+    own = ctx.ownership
+    if own is None:
+        return not_applicable(key, name, school, "screen", "Shareholding pattern unavailable")
+    s = own.latest
+    if s.promoter_pct is None:
+        # Widely held companies (HDFC Bank) file no promoter section; NSE's summary still
+        # records their promoter share for the quarter.
+        same_quarter = next((p for d, p in own.promoter_history if d == s.as_of), None)
+        if same_quarter is None:
+            return not_applicable(key, name, school, "screen", "Promoter holding not in the filing")
+        s = replace(s, promoter_pct=same_quarter)
+    year_ago = next(
+        (
+            p
+            for d, p in own.promoter_history
+            if d.year == s.as_of.year - 1 and d.month == s.as_of.month
+        ),
+        None,
+    )
+    change = s.promoter_pct - year_ago if year_ago is not None else None
+    inst = []
+    if own.year_ago and s.fpi_pct is not None and own.year_ago.fpi_pct is not None:
+        inst.append(
+            f"foreign institutions {s.fpi_pct:.1%} ({(s.fpi_pct - own.year_ago.fpi_pct) * 100:+.1f} pts in a year)"
+        )
+    if own.year_ago and s.dii_pct is not None and own.year_ago.dii_pct is not None:
+        inst.append(
+            f"domestic institutions {s.dii_pct:.1%} ({(s.dii_pct - own.year_ago.dii_pct) * 100:+.1f} pts)"
+        )
+    if s.promoter_pct == 0:
+        verdict, head = "no promoter", "No promoter group (widely held, professionally run)"
+    else:
+        pledged = s.pledged_of_promoter
+        head = f"Promoters hold {s.promoter_pct:.2%}"
+        if change is not None:
+            head += f" ({change * 100:+.1f} pts in a year)"
+        if pledged is not None:
+            head += f"; {pledged:.1%} of their shares pledged"
+        if pledged is not None and pledged >= HEAVY_PLEDGE:
+            verdict = "heavy pledge"
+        elif change is not None and change <= -PROMOTER_SELLING:
+            verdict = "promoter selling"
+        elif pledged is not None and pledged >= PLEDGE_CAUTION:
+            verdict = "some pledging"
+        else:
+            verdict = "clean"
+    return LensResult(
+        key,
+        name,
+        school,
+        "screen",
+        True,
+        value=s.promoter_pct,
+        verdict=verdict,
+        summary=head
+        + (". " + "; ".join(inst)[:1].upper() + "; ".join(inst)[1:] if inst else "")
+        + f". As of {s.as_of}.",
+        inputs={
+            "promoter_pct": s.promoter_pct,
+            "pledged_of_promoter": s.pledged_of_promoter,
+            "promoter_change_1y": change,
+            "fpi_pct": s.fpi_pct,
+            "dii_pct": s.dii_pct,
+            "mf_pct": s.mf_pct,
+            "retail_pct": s.retail_pct,
+        },
+    )
+
+
 QUALITY_LENSES = (
+    bank_asset_quality,
+    promoter_and_pledge,
     piotroski,
     altman,
     beneish,

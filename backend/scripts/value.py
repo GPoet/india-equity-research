@@ -17,6 +17,7 @@ from eqr.fundamentals import load_fundamentals
 from eqr.market import load_market_inputs
 from eqr.nse_client import NseClient
 from eqr.sources.filings import FilingsSource
+from eqr.sources.shareholding import fetch_ownership
 from eqr.sources.universe import load_resolver
 from eqr.valuation.engine import ValuationReport, fetch_price_data, value_company
 
@@ -95,7 +96,11 @@ def main(args: list[str]) -> int:
         try:
             f = load_fundamentals(source, symbol)
             prices = fetch_price_data(symbol, [y.fy_end for y in f.years], today)
-            report = value_company(f, market, prices, today)
+            try:
+                own = fetch_ownership(NseClient(cache=cache), symbol)
+            except Exception:  # noqa: BLE001 - optional
+                own = None
+            report = value_company(f, market, prices, today, own)
         except Exception as exc:
             print(f"\n{symbol}: failed: {type(exc).__name__}: {exc}")
             continue

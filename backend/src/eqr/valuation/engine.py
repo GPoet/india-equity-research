@@ -13,6 +13,7 @@ import yfinance as yf
 from eqr.fundamentals import Fundamentals
 from eqr.market import MarketInputs
 from eqr.sources.prices import history, quote, yahoo_symbol
+from eqr.sources.shareholding import Ownership
 from eqr.valuation.blend import Blend, blend
 from eqr.valuation.context import PriceData, ValuationContext, build_context
 from eqr.valuation.lenses_quality import QUALITY_LENSES
@@ -145,9 +146,13 @@ def _run(lens: Any, ctx: ValuationContext) -> LensResult:
 
 
 def value_company(
-    f: Fundamentals, market: MarketInputs, prices: PriceData, today: date
+    f: Fundamentals,
+    market: MarketInputs,
+    prices: PriceData,
+    today: date,
+    ownership: Ownership | None = None,
 ) -> ValuationReport:
-    ctx = build_context(f, market, prices)
+    ctx = build_context(f, market, prices, ownership)
     lenses = tuple(_run(lens, ctx) for lens in (*VALUE_LENSES, *QUALITY_LENSES))
     implied = _run(reverse_residual_income if f.is_financial else reverse_dcf, ctx)
     warnings = [w for w in (market.staleness_warning(today),) if w]
@@ -157,10 +162,12 @@ def value_company(
     result = blend(
         list(lenses), prices.price, f.is_financial, market.margin_of_safety, data_warnings
     )
-    if f.is_bank:
+    if f.is_bank and not f.asset_quality:
         warnings.append(
-            "Bank asset-quality ratios (GNPA/NNPA/CET1) come from the standalone filing: not loaded yet"
+            "Bank asset-quality ratios (GNPA/NNPA/CET1) could not be read from the standalone filing"
         )
+    if ownership is None:
+        warnings.append("Shareholding pattern unavailable: promoter and pledge check skipped")
     company_type = (
         "bank"
         if f.is_bank

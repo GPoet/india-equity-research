@@ -16,6 +16,7 @@ from eqr.fundamentals import (
     year_shares,
 )
 from eqr.market import MarketInputs
+from eqr.sources.shareholding import Ownership
 from eqr.valuation.formulas import cagr
 from eqr.xbrl import Metrics
 
@@ -59,6 +60,7 @@ class ValuationContext:
     notes: tuple[str, ...] = field(default_factory=tuple)
     # fiscal year end -> bonus/split multiple since then (shares then x factor = today's units)
     share_factors: dict[date, float] = field(default_factory=dict)
+    ownership: Ownership | None = None
 
     @property
     def years(self) -> tuple[YearRow, ...]:
@@ -200,7 +202,9 @@ def _cost_of_debt(f: Fundamentals, debt: float | None, m: MarketInputs) -> float
     return min(max(fin / debt, floor), cap)
 
 
-def build_context(f: Fundamentals, m: MarketInputs, p: PriceData) -> ValuationContext:
+def build_context(
+    f: Fundamentals, m: MarketInputs, p: PriceData, ownership: Ownership | None = None
+) -> ValuationContext:
     notes: list[str] = []
     shares = f.shares
     pat = owners_pat(f.ttm)
@@ -248,4 +252,5 @@ def build_context(f: Fundamentals, m: MarketInputs, p: PriceData) -> ValuationCo
         growth_inputs=growth_inputs,
         notes=tuple(notes),
         share_factors=factors,
+        ownership=ownership,
     )

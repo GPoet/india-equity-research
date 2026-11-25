@@ -6,12 +6,15 @@ latest balance sheet. Every derived total is None when any input is missing.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from datetime import date
 
 from eqr.sources.filings import FilingRef, FilingsSource
 from eqr.xbrl import Filing, Metrics
+
+log = logging.getLogger(__name__)
 
 # Point-in-time or ratio fields: never summed across quarters.
 NON_ADDITIVE = frozenset(
@@ -72,6 +75,10 @@ class Fundamentals:
     shares: float | None
     face_value: float | None
     shares_note: str = ""
+    # Banks: GNPA/NNPA/CET1 ratios from the latest standalone filing (consolidated filings
+    # leave them blank). Empty for non-banks or when unavailable.
+    asset_quality: Metrics = field(default_factory=dict)
+    asset_quality_period: date | None = None
 
     def year(self, fy_end: date) -> YearRow | None:
         return next((y for y in self.years if y.fy_end == fy_end), None)
@@ -314,4 +321,27 @@ def load_fundamentals(source: FilingsSource, symbol: str) -> Fundamentals:
         raise ValueError(f"NSE lists no results filings for {symbol}")
     consolidated = any(r.consolidated for r in refs)
     chosen = [r for r in refs if r.consolidated == consolidated]
-    return build_fundamentals(symbol, [(r, source.fetch(r)) for r in chosen])
+    f = build_fundamentals(symbol, [(r, source.fetch(r)) for r in chosen])
+    if f.is_bank:
+        f = _with_asset_quality(source, f, refs)
+    return f
+
+
+AQ_KEYS = ("gnpa_pct", "nnpa_pct", "cet1_pct", "roa_pct", "gross_npa", "net_npa")
+
+
+def _with_asset_quality(
+    source: FilingsSource, f: Fundamentals, refs: list[FilingRef]
+) -> Fundamentals:
+    """Asset-quality ratios come from the standalone filing; consolidated ones leave them blank."""
+    standalone = [r for r in refs if not r.consolidated]
+    if not standalone:
+        return f
+    latest = max(standalone, key=lambda r: r.period_end)
+    try:
+        m = source.fetch(latest).quarter_metrics()
+    except Exception as exc:  # noqa: BLE001 - optional data: leave the ratios missing, say so
+        log.warning("Standalone filing for %s unreadable: %s", f.symbol, exc)
+        return f
+    aq = {k: m.get(k) for k in AQ_KEYS if m.get(k) is not None}
+    return replace(f, asset_quality=aq, asset_quality_period=latest.period_end)
