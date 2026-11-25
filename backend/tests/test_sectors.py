@@ -4,6 +4,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import pytest
+
 from eqr.sectors.analysis import excess_correlations, sector_scores
 from eqr.sectors.catalog import LINKS, SECTORS, sector_for_industry
 from eqr.sources.indices import index_close_url, parse_index_closes
@@ -45,6 +46,8 @@ def test_catalog_indices_exist_in_nse_file() -> None:
         ("Iron & Steel", "Tata Steel Limited", "metal"),
         ("Cement & Cement Products", "UltraTech Cement Limited", "cement"),
         ("Power Generation/Distribution", "NTPC Limited", "power"),
+        ("Edible Oil", "Adani Wilmar Limited", "fmcg"),
+        ("Refineries", "Reliance Industries Limited", "oil_gas"),
     ],
 )
 def test_industry_mapping(industry: str, name: str, sector: str) -> None:
@@ -89,3 +92,41 @@ def test_scores_need_enough_history() -> None:
     scores = sector_scores(short, benchmark="Nifty 50")
     assert scores["rs_6m"].isna().all()
     assert (scores["stance"] == "insufficient history").all()
+
+
+def test_sector_picture_links_and_comovement() -> None:
+    from eqr.sectors.view import sector_picture
+
+    frame = _frame().rename(
+        columns={
+            "Strong": "Nifty IT",
+            "Twin": "Nifty India Internet",
+            "Weak": "Nifty Telecommunications",
+        }
+    )
+    pe = frame * 0 + 20.0
+    pic = sector_picture("it", frame, pe)
+    assert pic.sector is not None and pic.sector.stance == "bullish"
+    keys = {r.stat.key for r in pic.related}
+    assert {"internet", "telecom"} <= keys  # both are economic links of IT
+    internet = next(r for r in pic.related if r.stat.key == "internet")
+    assert internet.correlation is not None and internet.correlation > 0.3
+    assert pic.strongest[0].key in {"it", "internet"}
+
+
+def test_unknown_sector_notes() -> None:
+    from eqr.sectors.view import sector_picture
+
+    frame = _frame().rename(columns={"Strong": "Nifty IT"})
+    pic = sector_picture(None, frame, frame * 0 + 20.0)
+    assert pic.sector is None
+
+
+def test_short_history_index_gets_partial_stance() -> None:
+    frame = _frame()
+    frame.loc[frame.index[:-111], "Strong"] = np.nan  # index launched ~5 months ago
+    scores = sector_scores(frame, benchmark="Nifty 50")
+    row = scores.loc["Strong"]
+    assert np.isnan(row["rs_6m"])
+    assert row["stance"] == "bullish (short history)"
+    assert row["history_days"] == 111
