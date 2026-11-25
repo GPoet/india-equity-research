@@ -62,6 +62,9 @@ class FakeServices:
     def backtest(self):
         return None
 
+    def overview(self):
+        return {"as_of": "2026-11-25", "movers": {}}
+
     def forecast(self, symbol):
         return {"status": "not_fitted", "error": "run scripts/forecast_fit.py"}
 
@@ -208,3 +211,7 @@ def test_sentiment_runs_when_enabled(client) -> None:
 def test_forecast_endpoint(client) -> None:
     r = client.get("/api/company/TCS/forecast")
     assert r.status_code == 200 and r.json()["status"] == "not_fitted"
+
+
+def test_overview_endpoint(client) -> None:
+    assert client.get("/api/overview").json()["as_of"] == "2026-11-25"

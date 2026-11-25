@@ -188,6 +188,19 @@ export type Backtest = {
   };
 };
 
+export type Period = "day" | "week" | "month";
+export type Mover = { symbol: string; change: number; close: number };
+export type Overview = {
+  as_of: string;
+  universe: string;
+  names: Record<string, string>;
+  sectors: Record<Period, { sector: string; index: string; change: number }[]>;
+  movers: Record<Period, { best: Mover[]; worst: Mover[] }>;
+  trending: { symbol: string; ratio: number; change: number | null; turnover: number }[];
+  most_traded: { symbol: string; turnover: number; close: number; change: number | null }[];
+  news: { symbol: string; change: number; category: string; text: string; when: string; url: string | null }[];
+};
+
 export type HorizonForecast = {
   horizon: string;
   days: number;
@@ -281,6 +294,7 @@ export const api = {
     call<{ points: { date: string; close: number }[] }>(`/api/company/${encodeURIComponent(s)}/prices?period=${period}`),
   sector: (s: string) => call<SectorPicture>(`/api/company/${encodeURIComponent(s)}/sector`),
   sectors: () => call<{ as_of: string; sectors: SectorStat[] }>(`/api/sectors`),
+  overview: () => call<Overview>(`/api/overview`),
   forecast: (s: string) => call<Forecast>(`/api/company/${encodeURIComponent(s)}/forecast`),
   sentiment: (s: string) => call<SentimentState>(`/api/company/${encodeURIComponent(s)}/sentiment`),
   startSentiment: (s: string, force = false) =>

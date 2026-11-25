@@ -3,13 +3,15 @@ in-memory caches so the dashboard stays fast and NSE is not hammered."""
 
 from __future__ import annotations
 
+import csv
+import io
 import json
 import logging
 import threading
 import time
 from collections.abc import Callable
 from dataclasses import asdict
-from datetime import date
+from datetime import date, timedelta
 from typing import Any, TypeVar
 
 import yfinance as yf
@@ -19,12 +21,25 @@ from eqr.forecast.model import ForecastModel, forecast
 from eqr.fundamentals import Fundamentals, owners_profit
 from eqr.journal import HORIZONS, score_entry, summarise, thin
 from eqr.llm.xai import DEFAULT_MODEL, SpendLedger, XaiClient, XaiError
+from eqr.nse_client import NseError
+from eqr.overview import (
+    WINDOWS,
+    DayFiles,
+    headline,
+    most_traded,
+    movers,
+    sector_moves,
+    unusual_volume,
+)
 from eqr.pipeline import Context, announcements, research, valuation
 from eqr.research.store import ResearchStore
-from eqr.sectors.catalog import sector_for_industry
+from eqr.sectors.catalog import SECTORS, sector_for_industry
 from eqr.sectors.view import build_stats, sector_picture
 from eqr.sentiment.agent import run_sentiment
 from eqr.settings import load_env
+from eqr.sources.announcements import fetch_announcements
+from eqr.sources.bhavcopy import BhavcopySource
+from eqr.sources.corporate_actions import fetch_share_factors
 from eqr.sources.prices import history
 from eqr.valuation import ENGINE_VERSION
 from eqr.valuation.engine import _dated, fetch_market_series
@@ -36,6 +51,22 @@ VALUATION_TTL = 15 * 60
 SECTOR_TTL = 6 * 3600
 INDEX_DAYS = 400
 JOURNAL_PRICE_TTL = 6 * 3600
+OVERVIEW_TTL = 15 * 60
+UNIVERSE_TTL = 24 * 3600
+OVERVIEW_DAYS = 22  # a month of trading days plus the day before
+NEWS_MOVERS = 5
+NIFTY500 = "https://nsearchives.nseindia.com/content/indices/ind_nifty500list.csv"
+NEWS_CATEGORIES = (
+    "Financial Result Updates",
+    "Outcome of Board Meeting",
+    "Acquisition",
+    "Bagging/Receiving of orders/contracts",
+    "Credit Rating",
+    "Change in Management",
+    "Disclosure under SEBI Takeover Regulations",
+    "Press Release",
+    "General Updates",
+)
 SENTIMENT_HOURS = 6
 DEFAULT_XAI_BUDGET = 10.0
 
@@ -219,6 +250,85 @@ class LiveServices:
             "summary": summarise(thin(scored)),  # one call per company per 30 days
             "engine_version": ENGINE_VERSION,
         }
+
+    def _nifty500(self) -> dict[str, dict[str, str]]:
+        def make() -> dict[str, dict[str, str]]:
+            text = self.ctx.client.get_bytes(NIFTY500).decode("utf-8-sig")
+            return {
+                r["Symbol"].strip(): {
+                    "name": r["Company Name"].strip(),
+                    "industry": r["Industry"].strip(),
+                }
+                for r in csv.DictReader(io.StringIO(text))
+                if r.get("Symbol")
+            }
+
+        return self._memo.get("nifty500", UNIVERSE_TTL, make)
+
+    def overview(self) -> dict[str, Any]:
+        def make() -> dict[str, Any]:
+            universe = self._nifty500()
+            bhav = BhavcopySource(self.ctx.client, self.ctx.cache)
+            files: DayFiles = []
+            d = date.today()
+            while len(files) < OVERVIEW_DAYS and (date.today() - d).days < 60:
+                if d.weekday() < 5 and (bars := bhav.for_day(d)):
+                    files.append((d, bars))
+                d -= timedelta(days=1)
+            if len(files) < WINDOWS["month"] + 1:
+                raise NseError("Not enough NSE daily files to build the market overview")
+            files.reverse()
+            factors = fetch_share_factors(self.ctx.client, files[0][0], files[-1][0])
+            last_day, today = files[-1]
+            liquid = {s: b for s, b in today.items() if s in universe}
+            mv = movers(files, factors, set(universe))
+            closes, _ = self._index_frames()
+            week_movers = mv["week"]["best"][:NEWS_MOVERS] + mv["week"]["worst"][:NEWS_MOVERS]
+            return {
+                "as_of": last_day,
+                "universe": "Nifty 500",
+                "names": {s: v["name"] for s, v in universe.items()},
+                "sectors": sector_moves(closes, {s.label: s.index for s in SECTORS.values()}),
+                "movers": mv,
+                "trending": unusual_volume(
+                    [(dd, {s: b for s, b in bars.items() if s in universe}) for dd, bars in files],
+                    factors,
+                ),
+                "most_traded": most_traded(liquid, day=last_day, factors=factors),
+                "news": self._week_news(week_movers, files[-WINDOWS["week"]][0], last_day),
+            }
+
+        return self._memo.get("overview", OVERVIEW_TTL, make)
+
+    def _week_news(
+        self, rows: list[dict[str, Any]], start: date, end: date
+    ) -> list[dict[str, Any]]:
+        """The most substantive filing each of the week's biggest movers made that week."""
+        rank = {c: i for i, c in enumerate(NEWS_CATEGORIES)}
+        out = []
+        for r in sorted(rows, key=lambda x: abs(x["change"]), reverse=True):
+            try:
+                anns = fetch_announcements(self.ctx.client, r["symbol"], start, end)
+            except Exception as exc:  # noqa: BLE001 - one company's filings must not drop the section
+                log.warning("Announcements for %s failed: %s", r["symbol"], exc)
+                continue
+            picks = sorted(
+                (a for a in anns if a.category in rank),
+                key=lambda a: (rank[a.category], -a.when.timestamp()),
+            )
+            if picks:
+                a = picks[0]
+                out.append(
+                    {
+                        "symbol": r["symbol"],
+                        "change": r["change"],
+                        "category": a.category,
+                        "text": headline(a.text)[:400],
+                        "when": a.when,
+                        "url": a.url,
+                    }
+                )
+        return out
 
     def forecast(self, symbol: str) -> dict[str, Any]:
         model = ForecastModel.load()
