@@ -58,6 +58,14 @@ OVERVIEW_DAYS = 22  # a month of trading days plus the day before
 NEWS_MOVERS = 5
 NIFTY500 = "https://nsearchives.nseindia.com/content/indices/ind_nifty500list.csv"
 NIFTY50 = "https://nsearchives.nseindia.com/content/indices/ind_nifty50list.csv"
+ALL_LISTS = (
+    ("https://nsearchives.nseindia.com/content/equities/EQUITY_L.csv", "SYMBOL", "NAME OF COMPANY"),
+    (
+        "https://nsearchives.nseindia.com/emerge/corporates/content/SME_EQUITY_L.csv",
+        "SYMBOL",
+        "NAME_OF_COMPANY",
+    ),
+)
 NEWS_CATEGORIES = (
     "Financial Result Updates",
     "Outcome of Board Meeting",
@@ -268,6 +276,25 @@ class LiveServices:
 
         return self._memo.get("nifty500", UNIVERSE_TTL, make)
 
+    def _all_names(self) -> dict[str, str]:
+        """Symbol -> company name for every NSE-listed company, main board and SME."""
+
+        def make() -> dict[str, str]:
+            out: dict[str, str] = {}
+            for url, sym_col, name_col in ALL_LISTS:
+                try:
+                    text = self.ctx.client.get_bytes(url).decode("utf-8-sig")
+                except NseError as exc:
+                    log.warning("Equity list %s unavailable: %s", url, exc)
+                    continue
+                for r in csv.DictReader(io.StringIO(text)):
+                    r = {k.strip(): (v or "").strip() for k, v in r.items() if k}
+                    if r.get(sym_col):
+                        out[r[sym_col]] = r.get(name_col) or r[sym_col]
+            return out
+
+        return self._memo.get("all-names", UNIVERSE_TTL, make)
+
     def _nifty50(self) -> set[str]:
         def make() -> set[str]:
             text = self.ctx.client.get_bytes(NIFTY50).decode("utf-8-sig")
@@ -281,7 +308,7 @@ class LiveServices:
     def scanner(self) -> Scanner:
         if self._scanner is None:
             self._scanner = Scanner(
-                self.ctx, self.ctx.data_dir / "scan", self._nifty500, self._nifty50
+                self.ctx, self.ctx.data_dir / "scan", self._all_names, self._nifty50
             )
         return self._scanner
 

@@ -156,6 +156,11 @@ class NseClient:
             self._cache.set(key, text, ttl)
         return text
 
+    def forget_json(self, path: str) -> None:
+        """Drop a cached API response so the next get_json fetches it fresh."""
+        if self._cache:
+            self._cache.delete(f"nse:{API + path}")
+
     def get_json(self, path: str, ttl: float | None) -> Any:
         url = API + path
         key = f"nse:{url}"

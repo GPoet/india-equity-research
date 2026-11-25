@@ -224,6 +224,8 @@ export type ScanRow = {
   upside: number | null;
   red_flags: string[];
   model_notes?: string[];
+  valuation_note?: string | null;
+  series?: string;
   company_type: string;
   forecast: Record<string, ScanForecast> | null;
 };

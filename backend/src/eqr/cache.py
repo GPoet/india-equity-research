@@ -47,6 +47,11 @@ class Cache:
             )
             self._conn.commit()
 
+    def delete(self, key: str) -> None:
+        with self._lock:
+            self._conn.execute("DELETE FROM kv WHERE key = ?", (key,))
+            self._conn.commit()
+
     def close(self) -> None:
         with self._lock:
             self._conn.close()

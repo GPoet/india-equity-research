@@ -62,7 +62,8 @@ function ScanTable({ rows, showFlags }: { rows: ScanRow[]; showFlags: boolean })
                 <td className="num">{f ? pct(f.p_beat_nifty, false, 0) : "–"}</td>
                 <td className="num">{f ? pct(f.p_up, false, 0) : "–"}</td>
                 <td>
-                  <span className={`tag ${signalTone(r.signal)}`}>{r.signal}</span>
+                  <span className={`tag ${signalTone(r.signal)}`} title={r.valuation_note ?? undefined}>{r.signal}</span>
+                  {r.valuation_note && showFlags && <div className="stock-name">{r.valuation_note}</div>}
                   {r.upside !== null && <div className="stock-name">fair value {pct(r.upside, true, 0)}</div>}
                 </td>
                 {showFlags && (
@@ -129,15 +130,15 @@ export function DailyScan() {
         </button>
       </div>
       <p className="card-note">
-        Every Nifty 500 stock run through the valuation, quality checks, ownership and the Agents Forecast, ranked by the odds of beating
-        the Nifty over the next month. Stocks with red flags are left out of the picks. Runs by itself each trading day after NSE
-        publishes its end-of-day file (around 7 pm).
+        Every NSE-listed stock that traded, main board and SME, run through the valuation, quality checks, ownership and the Agents
+        Forecast, ranked by the odds of beating the Nifty over the next month. Picks leave out stocks with red flags and stocks that
+        traded under ₹1 crore on the day. Runs by itself each trading day after NSE publishes its end-of-day file (around 7 pm).
       </p>
       {error && <p className="error">{error}</p>}
       {status?.running && p?.total ? (
         <p className="small muted">
           Scanning {p.done} of {p.total}{p.current ? ` (now ${p.current})` : ""}. The first full scan downloads every company&apos;s filings
-          and can take several hours; later days take about half an hour.
+          and takes a day or two; later days take under an hour.
         </p>
       ) : null}
       {p?.error && <p className="error small">{p.error}</p>}
@@ -157,7 +158,8 @@ export function DailyScan() {
           </p>
           <p className="small muted" style={{ marginTop: "0.5rem" }}>
             How far to trust this: tested on 2024 onwards, data it never saw, the forecast showed no measured edge at picking which stocks
-            beat the Nifty. Expected moves are small next to the ranges. Treat the list as a screen to research from, not a buy list. Each
+            beat the Nifty, and it was fitted on Nifty 50 stocks, so it is less tested on small companies. Expected moves are small next to
+            the ranges. Treat the list as a screen to research from, not a buy list. Each
             day&apos;s list is saved so its real record can be scored as the weeks pass.
           </p>
         </>

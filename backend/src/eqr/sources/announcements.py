@@ -70,6 +70,19 @@ def parse_announcements(rows: list[dict[str, Any]]) -> list[Announcement]:
     return sorted(out, key=lambda a: a.when, reverse=True)
 
 
+def fetch_market_announcements(client: NseClient, day: date) -> list[Announcement]:
+    """Every company's announcements on one day, main board and SME."""
+    out: list[Announcement] = []
+    for index in ("equities", "sme"):
+        rows = client.get_json(
+            f"corporate-announcements?index={index}&from_date={day:%d-%m-%Y}&to_date={day:%d-%m-%Y}",
+            ttl=LIST_TTL if day >= date.today() else 7 * 24 * 3600,
+        )
+        if isinstance(rows, list):
+            out.extend(parse_announcements(rows))
+    return out
+
+
 def fetch_announcements(
     client: NseClient, symbol: str, start: date, end: date
 ) -> list[Announcement]:

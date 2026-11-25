@@ -7,6 +7,7 @@ def row(sym, p, flags=(), fc=True):
     return {
         "symbol": sym,
         "red_flags": list(flags),
+        "turnover": 5e9,
         "forecast": {"1m": {"p_beat_nifty": p, "median": 100 * (1 + p - 0.5)}} if fc else None,
     }
 

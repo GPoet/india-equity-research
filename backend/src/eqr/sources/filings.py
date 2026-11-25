@@ -20,7 +20,9 @@ from eqr.xbrl import Filing, parse_filing
 
 log = logging.getLogger(__name__)
 
-LIST_TTL = 6 * 3600  # new filings appear a few times a year; 6h is plenty
+# Filing lists change a few times a year. They are kept for 30 days, and the daily scan drops
+# a company's lists as soon as NSE's market-wide announcements show it filed new results.
+LIST_TTL = 30 * 24 * 3600
 _MONTHS = {
     m: i
     for i, m in enumerate(
@@ -167,32 +169,32 @@ class FilingsSource:
     def __init__(self, client: _Client) -> None:
         self._client = client
 
-    def list(self, symbol: str) -> list[FilingRef]:
+    @staticmethod
+    def _paths(symbol: str) -> tuple[str, str]:
         sym = symbol.replace("&", "%26")
-        integrated = self._client.get_json(
-            f"integrated-filing-results?index=equities&symbol={sym}"
-            "&type=Integrated%20Filing-%20Financials",
-            ttl=LIST_TTL,
-        )
-        legacy = self._client.get_json(
+        return (
+            f"integrated-filing-results?index=equities&symbol={sym}&type=Integrated%20Filing-%20Financials",
             f"corporates-financial-results?index=equities&symbol={sym}&period=Quarterly",
-            ttl=LIST_TTL,
         )
+
+    def invalidate(self, symbol: str) -> None:
+        """Forget the cached filing lists (new results were announced)."""
+        for path in self._paths(symbol):
+            self._client.forget_json(path)
+
+    def list(self, symbol: str) -> list[FilingRef]:
+        integrated_path, legacy_path = self._paths(symbol)
+        integrated = self._client.get_json(integrated_path, ttl=LIST_TTL)
+        legacy = self._client.get_json(legacy_path, ttl=LIST_TTL)
         if not isinstance(integrated, dict) or not isinstance(legacy, list):
             raise ValueError(f"Unexpected filings payload shape for {symbol}")
         return merge_refs(parse_legacy(legacy), parse_integrated(integrated))
 
     def list_raw(self, symbol: str) -> list[FilingRef]:
         """Every filing version, unmerged: the backtest needs to know what was public when."""
-        sym = symbol.replace("&", "%26")
-        integrated = self._client.get_json(
-            f"integrated-filing-results?index=equities&symbol={sym}&type=Integrated%20Filing-%20Financials",
-            ttl=LIST_TTL,
-        )
-        legacy = self._client.get_json(
-            f"corporates-financial-results?index=equities&symbol={sym}&period=Quarterly",
-            ttl=LIST_TTL,
-        )
+        integrated_path, legacy_path = self._paths(symbol)
+        integrated = self._client.get_json(integrated_path, ttl=LIST_TTL)
+        legacy = self._client.get_json(legacy_path, ttl=LIST_TTL)
         if not isinstance(integrated, dict) or not isinstance(legacy, list):
             raise ValueError(f"Unexpected filings payload shape for {symbol}")
         return [*parse_legacy(legacy), *parse_integrated(integrated)]

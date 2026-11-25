@@ -11,14 +11,15 @@ import os
 import threading
 import time
 from collections.abc import Callable
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 from eqr.app.serialize import clean
 from eqr.forecast.model import ForecastModel
 from eqr.pipeline import Context
-from eqr.scan import order_universe, rank, scan_symbol, should_run
+from eqr.scan import order_universe, rank, scan_symbol, should_run, symbols_with_new_results
+from eqr.sources.announcements import fetch_market_announcements
 from eqr.sources.bhavcopy import BhavcopySource
 from eqr.valuation.engine import fetch_nifty
 
@@ -47,7 +48,7 @@ class Scanner:
         self,
         ctx: Context,
         out_dir: Path,
-        universe: Callable[[], dict[str, dict[str, str]]],
+        universe: Callable[[], dict[str, str]],
         nifty50: Callable[[], set[str]],
     ) -> None:
         self._ctx, self._dir = ctx, out_dir
@@ -120,12 +121,12 @@ class Scanner:
         if not bars:
             raise RuntimeError("No NSE end-of-day file found in the last 10 days")
         day = next(iter(bars.values())).trade_date
-        universe = self._universe()
-        order = order_universe(
-            [s for s in universe if s in bars],
-            self._nifty50(),
-            {s: b.turnover for s, b in bars.items()},
-        )
+        self._refresh_filed(day)
+        names = self._universe()
+        # Every company that traded that day, main board and SME. NSE's equity lists name the
+        # companies; ETFs and index funds trade in the same file but are not on them.
+        listed = [sym for sym in bars if sym in names] if names else list(bars)
+        order = order_universe(listed, self._nifty50(), {s: b.turnover for s, b in bars.items()})
         current = _read(self._dir / "current.json")
         rows: dict[str, dict[str, Any]] = (
             {r["symbol"]: r for r in current["rows"]}
@@ -150,7 +151,7 @@ class Scanner:
                 continue
             try:
                 rows[sym] = scan_symbol(
-                    self._ctx, sym, universe[sym]["name"], bars[sym], nifty, market, model
+                    self._ctx, sym, names.get(sym, sym), bars[sym], nifty, market, model
                 )
             except Exception as exc:  # noqa: BLE001 - one company must not stop the scan
                 errors[sym] = f"{type(exc).__name__}: {str(exc)[:160]}"
@@ -172,6 +173,25 @@ class Scanner:
                 "finished_at": time.time(),
             }
 
+    def _refresh_filed(self, day: date) -> None:
+        """Drop cached filing lists of companies that announced results since the last scan."""
+        last = self.latest()
+        if last is None:
+            return  # first scan: everything is fetched fresh anyway
+        d = date.fromisoformat(last["price_day"])
+        refreshed: set[str] = set()
+        while d < day:
+            d += timedelta(days=1)
+            try:
+                refreshed |= symbols_with_new_results(
+                    fetch_market_announcements(self._ctx.client, d)
+                )
+            except Exception as exc:  # noqa: BLE001 - a missed day only means slightly stale lists
+                log.warning("Announcements for %s unavailable: %s", d, exc)
+        for sym in refreshed:
+            self._ctx.filings.invalidate(sym)
+        log.info("Scan: refreshed filing lists of %d companies with new results", len(refreshed))
+
     @staticmethod
     def _result(
         day: date,
@@ -185,7 +205,7 @@ class Scanner:
             "price_day": day.isoformat(),
             "run_at": datetime.now().isoformat(timespec="minutes"),
             "complete": complete,
-            "universe": "Nifty 500",
+            "universe": "Every NSE-listed stock that traded (main board and SME)",
             "scanned": len(rows),
             "total": total,
             "errors": errors,
