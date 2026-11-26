@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 
 import { Volume } from "@/components/MarketOverview";
-import { api, ApiError, type ScanRow, type ScanStatus } from "@/lib/api";
+import { api, ApiError, STATIC, type ScanRow, type ScanStatus } from "@/lib/api";
 import { pct, rupees } from "@/lib/format";
 
 const POLL_MS = 10000;
@@ -136,9 +136,11 @@ export function DailyScan() {
     <section className="card scan">
       <div className="card-head">
         <h2>Agents&apos; picks for the coming month</h2>
-        <button className="primary" onClick={refresh} disabled={busy || status?.running}>
-          {status?.running ? "Scanning…" : busy ? "Starting…" : "Refresh"}
-        </button>
+        {!STATIC && (
+          <button className="primary" onClick={refresh} disabled={busy || status?.running}>
+            {status?.running ? "Scanning…" : busy ? "Starting…" : "Refresh"}
+          </button>
+        )}
       </div>
       <p className="card-note">
         Every listed company that traded (NSE main board and SME, plus companies listed only on BSE) run through the valuation,

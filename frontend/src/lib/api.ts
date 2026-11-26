@@ -338,6 +338,72 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+// Hosted site (Cloudflare Pages): no Python server. Data comes from files the daily scan
+// exports (public/data); research goes to a Cloudflare function at the same URL as the live API.
+export const STATIC = process.env.NEXT_PUBLIC_STATIC === "1";
+
+type IndexRow = { s: string; t: string; n: string; x: string };
+type StaticCompany = Company & { forecast: Forecast; exchange?: string; ticker?: string; link?: string | null };
+
+let indexLoad: Promise<IndexRow[]> | null = null;
+const companyLoads = new Map<string, Promise<StaticCompany>>();
+
+function staticIndex(): Promise<IndexRow[]> {
+  indexLoad ??= call<IndexRow[]>("/data/index.json");
+  return indexLoad;
+}
+
+function staticCompany(s: string): Promise<StaticCompany> {
+  let p = companyLoads.get(s);
+  if (!p) {
+    p = call<StaticCompany>(`/data/c/${encodeURIComponent(s)}.json`).catch((e) => {
+      companyLoads.delete(s);
+      if (e instanceof ApiError && e.status === 404) {
+        throw new ApiError(404, `${s} is not in today's scan, or it could not be valued`);
+      }
+      throw e;
+    });
+    companyLoads.set(s, p);
+  }
+  return p;
+}
+
+async function staticResolve(q: string): Promise<Resolution> {
+  const idx = await staticIndex();
+  const query = q.trim().toUpperCase();
+  const exact = idx.find((r) => r.s.toUpperCase() === query || r.t.toUpperCase() === query);
+  if (exact) return { match: { symbol: exact.s, name: exact.n }, candidates: [] };
+  const words = query.split(/\s+/).filter(Boolean);
+  const candidates = idx
+    .map((r) => {
+      const hay = `${r.t} ${r.n}`.toUpperCase();
+      const hits = words.filter((w) => hay.includes(w)).length;
+      const score = hits / Math.max(words.length, 1) + (r.t.toUpperCase().startsWith(query) ? 0.5 : 0);
+      return { symbol: r.s, name: `${r.n}${r.x === "BSE" ? " (BSE)" : ""}`, score };
+    })
+    .filter((c) => c.score >= 1)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 8);
+  return { match: candidates.length === 1 ? { symbol: candidates[0].symbol, name: candidates[0].name } : null, candidates };
+}
+
+const staticApi = {
+  resolve: staticResolve,
+  company: (s: string) => staticCompany(s) as Promise<Company>,
+  sector: async (s: string) => {
+    const c = await staticCompany(s);
+    const p = await call<{ picture: SectorPicture["picture"] }>(`/data/sector/${c.sector_key ?? "none"}.json`);
+    return { industry: c.industry, sector_key: c.sector_key, picture: p.picture };
+  },
+  sectors: () => call<{ as_of: string; sectors: SectorStat[] }>("/data/sectors.json"),
+  overview: () => call<Overview>("/data/overview.json"),
+  scan: () => call<ScanStatus>("/data/scan.json"),
+  forecast: async (s: string) => (await staticCompany(s)).forecast,
+  sentiment: async (): Promise<SentimentState> => ({ status: "disabled", error: "X sentiment is not set up on the hosted site" }),
+  journal: async (): Promise<Journal> => ({ as_of: "", entries: [], summary: [], engine_version: "" }),
+  backtest: () => call<Backtest>("/data/backtest.json"),
+};
+
 export const api = {
   resolve: (q: string) => call<Resolution>(`/api/resolve?q=${encodeURIComponent(q)}`),
   company: (s: string) => call<Company>(`/api/company/${encodeURIComponent(s)}`),
@@ -365,3 +431,5 @@ export const api = {
       headers: { "X-Equity-Desk": "1" },
     }),
 };
+if (STATIC) Object.assign(api, staticApi);
+

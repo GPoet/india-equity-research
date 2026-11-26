@@ -1,0 +1,56 @@
+name: daily-scan
+on:
+  schedule:
+    - cron: "45 14 * * 1-5" # 20:15 IST, after NSE publishes the day's file
+    - cron: "15 21 * * *" # 02:45 IST, resumes an unfinished scan
+    - cron: "15 4 * * *" # 09:45 IST, resumes again
+  workflow_dispatch:
+concurrency:
+  group: scan
+  cancel-in-progress: false
+permissions:
+  contents: read
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 345
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Restore scan data
+        uses: actions/cache/restore@v4
+        with:
+          path: backend/data
+          key: eqr-data-${{ github.run_id }}
+          restore-keys: eqr-data-
+      - name: Install backend
+        working-directory: backend
+        run: uv sync --frozen
+      - name: Scan (finishes or resumes within budget)
+        working-directory: backend
+        run: uv run python scripts/run_scan.py --budget-minutes 280
+      - name: Save scan data
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: backend/data
+          key: eqr-data-${{ github.run_id }}
+      - name: Export site data
+        working-directory: backend
+        run: uv run python scripts/export_site.py
+      - name: Build static site
+        working-directory: frontend
+        env:
+          NEXT_PUBLIC_STATIC: "1"
+        run: npm ci && npm run build
+      - name: Deploy to Cloudflare Pages
+        working-directory: frontend
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: npx --yes wrangler@3 pages deploy out --project-name equity-desk --branch main --commit-dirty=true

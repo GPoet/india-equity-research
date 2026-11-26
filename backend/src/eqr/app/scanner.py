@@ -29,6 +29,7 @@ from eqr.valuation.engine import fetch_nifty
 log = logging.getLogger(__name__)
 
 CHECK_EVERY = 30 * 60
+INDUSTRY_SEED_DAYS = 30
 SAVE_EVERY = 10
 
 
@@ -37,6 +38,11 @@ def _write(path: Path, data: dict[str, Any]) -> None:
     tmp = path.with_suffix(".tmp")
     tmp.write_text(json.dumps(clean(data)))
     os.replace(tmp, path)
+
+
+def safe_key(key: str) -> str:
+    """'BSE:500002' -> 'BSE-500002'; NSE symbols such as M&M stay readable."""
+    return key.replace(":", "-").replace("/", "_")
 
 
 def _read(path: Path) -> dict[str, Any] | None:
@@ -60,6 +66,7 @@ class Scanner:
         self._running = False
         self._progress: dict[str, Any] = {}
         self._stop = threading.Event()
+        self.deadline: float | None = None  # epoch seconds: save and stop cleanly past this
 
     # ---- reading -------------------------------------------------------------
     def latest(self) -> dict[str, Any] | None:
@@ -106,6 +113,19 @@ class Scanner:
         with self._ctx.client.background():
             got = BhavcopySource(self._ctx.client, self._ctx.cache).latest(date.today())
         return next(iter(got.values())).trade_date if got else None
+
+    def run_now(self, deadline: float | None = None) -> dict[str, Any]:
+        """Run (or resume) a scan in this thread; for scheduled jobs outside the API."""
+        self.deadline = deadline
+        with self._lock:
+            self._running = True
+        try:
+            with self._ctx.client.background():
+                self._run()
+        finally:
+            with self._lock:
+                self._running = False
+        return self.status()
 
     def _run_guarded(self) -> None:
         try:
@@ -164,7 +184,7 @@ class Scanner:
             ctx_mgr = self._ctx.client.background() if name == "nse" else _nullcontext()
             with ctx_mgr:
                 for key, job in jobs:
-                    if self._stop.is_set():
+                    if self._stop.is_set() or (self.deadline and time.time() > self.deadline):
                         return
                     with guard:
                         state[name] = key
@@ -172,6 +192,12 @@ class Scanner:
                     if key not in rows:
                         try:
                             row = job()
+                            detail = row.pop("_detail", None)
+                            if detail is not None:  # full page data, kept out of the scan file
+                                _write(
+                                    self._dir / "companies" / f"{safe_key(key)}.json",
+                                    {**detail, "row": row, "price_day": day.isoformat()},
+                                )
                             with guard:
                                 rows[key] = {**row, "key": key}
                         except Exception as exc:  # noqa: BLE001 - one company must not stop the scan
@@ -195,7 +221,11 @@ class Scanner:
             t.start()
         for t in threads:
             t.join()
-        if self._stop.is_set():
+        if self._stop.is_set() or len(rows) + len(errors) < total:
+            # stopped early (shutdown or deadline): keep what is done; the next run resumes
+            _write(
+                self._dir / "current.json", self._result(day, rows, errors, total, complete=False)
+            )
             return
         result = self._result(day, rows, errors, total, complete=True)
         _write(self._dir / "current.json", result)
@@ -263,20 +293,28 @@ class Scanner:
         return [(f"BSE:{code}", lambda code=code: job(code)) for code in only]
 
     def _refresh_filed(self, day: date) -> None:
-        """Drop cached filing lists of companies that announced results since the last scan."""
+        """Read the market-wide announcements since the last scan: drop cached filing lists of
+        companies that announced results, and learn each company's NSE industry."""
         last = self.latest()
-        if last is None:
-            return  # first scan: everything is fetched fresh anyway
-        d = date.fromisoformat(last["price_day"])
+        first = last is None
+        d = (
+            day - timedelta(days=INDUSTRY_SEED_DAYS)
+            if first
+            else date.fromisoformat(last["price_day"])
+        )
         refreshed: set[str] = set()
+        industries = _read(self._dir / "industries.json") or {}
         while d < day:
             d += timedelta(days=1)
             try:
-                refreshed |= symbols_with_new_results(
-                    fetch_market_announcements(self._ctx.client, d)
-                )
+                anns = fetch_market_announcements(self._ctx.client, d)
             except Exception as exc:  # noqa: BLE001 - a missed day only means slightly stale lists
                 log.warning("Announcements for %s unavailable: %s", d, exc)
+                continue
+            industries.update({a.symbol: a.industry for a in anns if a.industry})
+            if not first:
+                refreshed |= symbols_with_new_results(anns)
+        _write(self._dir / "industries.json", industries)
         for sym in refreshed:
             self._ctx.filings.invalidate(sym)
         log.info("Scan: refreshed filing lists of %d companies with new results", len(refreshed))

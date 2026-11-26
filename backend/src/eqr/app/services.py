@@ -17,10 +17,11 @@ from typing import Any, TypeVar
 import yfinance as yf
 
 from eqr.app.scanner import Scanner
+from eqr.company_view import series
 from eqr.forecast.dataset import observation
 from eqr.forecast.model import ForecastModel, forecast
-from eqr.fundamentals import Fundamentals, owners_profit
 from eqr.journal import HORIZONS, score_entry, summarise, thin
+from eqr.listings import all_names, nifty50_symbols
 from eqr.llm.xai import DEFAULT_MODEL, SpendLedger, XaiClient, XaiError
 from eqr.nse_client import NseError
 from eqr.overview import (
@@ -119,37 +120,6 @@ class _Failure:
         self.exc = exc
 
 
-def _series(f: Fundamentals) -> dict[str, list[dict[str, Any]]]:
-    top = "total_income" if f.is_bank else "revenue"
-    years = [
-        {
-            "fy_end": y.fy_end,
-            "source": y.income_source,
-            "revenue": y.income.get(top),
-            "ebitda": y.income.get("ebitda"),
-            "profit": owners_profit(y.income),
-            "eps": y.income.get("eps_basic"),
-            "cfo": y.income.get("cfo"),
-            "capex": y.income.get("capex_ppe"),
-            "equity": y.balance.get("equity_owners"),
-            "debt": y.balance.get("total_debt"),
-            "nii": y.income.get("nii"),
-        }
-        for y in reversed(f.years)
-    ]
-    quarters = [
-        {
-            "period_end": q.period_end,
-            "revenue": q.income.get(top),
-            "profit": owners_profit(q.income),
-            "ebitda": q.income.get("ebitda"),
-            "nii": q.income.get("nii"),
-        }
-        for q in reversed(f.quarters[:12])
-    ]
-    return {"years": years, "quarters": quarters}
-
-
 class LiveServices:
     def __init__(self, ctx: Context | None = None) -> None:
         self.ctx = ctx or Context()
@@ -197,7 +167,7 @@ class LiveServices:
                 "industry": industry,
                 "sector_key": sector_for_industry(industry, sec.name if sec else ""),
                 "valuation": report.to_dict(),
-                "financials": _series(f),
+                "financials": series(f),
                 "generated_at": time.time(),
             }
 
@@ -277,37 +247,10 @@ class LiveServices:
         return self._memo.get("nifty500", UNIVERSE_TTL, make)
 
     def _all_names(self) -> tuple[dict[str, str], set[str]]:
-        """(symbol -> company name, ISINs) for every NSE-listed company, main board and SME.
-        The ISINs tell which BSE companies are also on NSE."""
-
-        def make() -> tuple[dict[str, str], set[str]]:
-            out: dict[str, str] = {}
-            isins: set[str] = set()
-            for url, sym_col, name_col in ALL_LISTS:
-                try:
-                    text = self.ctx.client.get_bytes(url).decode("utf-8-sig")
-                except NseError as exc:
-                    log.warning("Equity list %s unavailable: %s", url, exc)
-                    continue
-                for r in csv.DictReader(io.StringIO(text)):
-                    r = {k.strip(): (v or "").strip() for k, v in r.items() if k}
-                    if r.get(sym_col):
-                        out[r[sym_col]] = r.get(name_col) or r[sym_col]
-                    isin = r.get("ISIN NUMBER") or r.get("ISIN_NUMBER")
-                    if isin:
-                        isins.add(isin)
-            return out, isins
-
-        return self._memo.get("all-names", UNIVERSE_TTL, make)
+        return self._memo.get("all-names", UNIVERSE_TTL, lambda: all_names(self.ctx.client))
 
     def _nifty50(self) -> set[str]:
-        def make() -> set[str]:
-            text = self.ctx.client.get_bytes(NIFTY50).decode("utf-8-sig")
-            return {
-                r["Symbol"].strip() for r in csv.DictReader(io.StringIO(text)) if r.get("Symbol")
-            }
-
-        return self._memo.get("nifty50", UNIVERSE_TTL, make)
+        return self._memo.get("nifty50", UNIVERSE_TTL, lambda: nifty50_symbols(self.ctx.client))
 
     @property
     def scanner(self) -> Scanner:

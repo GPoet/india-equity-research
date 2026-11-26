@@ -8,12 +8,14 @@ screen, not a prediction. Every day's ranking is saved so it can be scored as ti
 from __future__ import annotations
 
 import logging
+from dataclasses import asdict
 from datetime import date, timedelta
 from typing import Any
 
 import pandas as pd
 
 from eqr.backtest import refs_known_on
+from eqr.company_view import series as company_series
 from eqr.forecast.dataset import observation
 from eqr.forecast.model import ForecastModel, forecast
 from eqr.fundamentals import load_fundamentals, main_basis
@@ -106,6 +108,7 @@ def _valuation(
         ],
         "model_notes": [f for f in r.red_flags if "negative equity value" in f],
         "company_type": report.company_type,
+        "_detail": {"valuation": report.to_dict(), "financials": company_series(f)},
     }
 
 
@@ -136,7 +139,7 @@ def scan_symbol(
     cannot be valued still gets its price-based forecast, with the reason noted."""
     day = bar.trade_date
     filings = filings or ctx.filings
-    series = series or fetch_market_series(symbol, index=nifty)
+    prices_series = series or fetch_market_series(symbol, index=nifty)
     row: dict[str, Any] = {
         "exchange": "NSE",
         "ticker": symbol,
@@ -160,12 +163,15 @@ def scan_symbol(
         **(extra or {}),
     }
     try:
-        v = _valuation(ctx, symbol, series, bar, market, filings, with_ownership)
+        v = _valuation(ctx, symbol, prices_series, bar, market, filings, with_ownership)
         beta = v.pop("beta")
+        detail = v.pop("_detail")
         row.update(v)
     except (ValueError, NseError, KeyError, ZeroDivisionError) as exc:
         row["valuation_note"] = f"Could not be valued: {str(exc)[:160]}"
-        beta, _ = beta_as_of(series.closes, series.index_closes, day)
+        detail = {"valuation": None, "financials": None}
+        beta, _ = beta_as_of(prices_series.closes, prices_series.index_closes, day)
+    row["_detail"] = detail
     if model is None:
         return row
     pairs = []
@@ -183,11 +189,29 @@ def scan_symbol(
         if row["confidence"]
         else None
     )
-    x = observation(symbol, pairs, series, day, value_row)
+    x = observation(symbol, pairs, prices_series, day, value_row)
     if x is None:
         row["forecast_note"] = "Under a year of trading: no forecast"
         return row
-    fc = forecast(model, x, bar.close, beta, market.cost_of_equity(1.0) / 100, day)
+    market_return = market.cost_of_equity(1.0) / 100
+    fc = forecast(model, x, bar.close, beta, market_return, day)
+    detail["forecast"] = {
+        "status": "ok",
+        "price": bar.close,
+        "price_as_of": day.isoformat(),
+        "horizons": [asdict(h) for h in fc],
+        "inputs": {
+            k: x.get(k) for k in ("mom_12_1", "rev_1m", "surprise", "value", "next_results_est")
+        },
+        "beta": beta,
+        "market_return_assumed": market_return,
+        "model": {
+            "fitted_on": model.fitted_on,
+            "tested_on": model.tested_on,
+            "test": model.test,
+            "has_edge": model.has_edge,
+        },
+    }
     row["forecast"] = {
         h.horizon: {
             "target_date": h.target_date,
