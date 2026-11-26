@@ -2,7 +2,8 @@
 history: the value is read at a hidden prompt.
 
 Usage: python3 backend/scripts/set_pages_secret.py GH_TOKEN
-Uses the Cloudflare token in ~/.cloudflare-token (or CLOUDFLARE_API_TOKEN).
+Uses the Cloudflare token in ~/.cloudflare-token (or CLOUDFLARE_API_TOKEN), and the account and
+project from CLOUDFLARE_ACCOUNT_ID / CF_PAGES_PROJECT or ~/.equity-desk-pages ("account project").
 """
 
 from __future__ import annotations
@@ -14,8 +15,15 @@ import sys
 import urllib.request
 from pathlib import Path
 
-ACCOUNT = "fd61b4383616a55b4c4b37e724fecd01"
-PROJECT = "equity-desk"
+
+def target() -> tuple[str, str]:
+    account, project = os.environ.get("CLOUDFLARE_ACCOUNT_ID"), os.environ.get("CF_PAGES_PROJECT")
+    saved = Path.home() / ".equity-desk-pages"
+    if not (account and project) and saved.exists():
+        account, project = saved.read_text().split()[:2]
+    if not (account and project):
+        raise SystemExit("Set CLOUDFLARE_ACCOUNT_ID and CF_PAGES_PROJECT, or write them to ~/.equity-desk-pages")
+    return account, project
 
 
 def main() -> int:
@@ -28,10 +36,11 @@ def main() -> int:
     if not value:
         print("Nothing entered; unchanged.")
         return 1
+    account, project = target()
     env = {name: {"type": "secret_text", "value": value}}
     body = json.dumps({"deployment_configs": {"production": {"env_vars": env}, "preview": {"env_vars": env}}}).encode()
     req = urllib.request.Request(
-        f"https://api.cloudflare.com/client/v4/accounts/{ACCOUNT}/pages/projects/{PROJECT}",
+        f"https://api.cloudflare.com/client/v4/accounts/{account}/pages/projects/{project}",
         data=body, method="PATCH",
         headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
     )

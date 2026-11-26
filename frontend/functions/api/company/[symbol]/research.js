@@ -4,6 +4,8 @@
 // only), GH_REPO ("owner/name"); KV binding RESEARCH.
 const SYMBOL = /^[A-Z0-9&_-]{1,24}$/;
 const RUNNING_TTL = 20 * 60;
+// No sign-in on this site, so cap research runs per day: each one uses the owner's Claude plan.
+const DEFAULT_DAILY_CAP = 20;
 
 function json(body, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json", "cache-control": "no-store" } });
@@ -35,6 +37,12 @@ export async function onRequestPost({ params, env, request }) {
     return json({ status: "failed", error: "Research covers NSE-listed companies for now", kind: "unsupported" });
   }
   if (await env.RESEARCH.get(`p-${sym}`)) return json({ status: "running" });
+  const day = new Date().toISOString().slice(0, 10);
+  const used = Number((await env.RESEARCH.get(`n-${day}`)) || 0);
+  const cap = Number(env.RESEARCH_DAILY_CAP || DEFAULT_DAILY_CAP);
+  if (used >= cap) {
+    return json({ status: "failed", error: `Daily research limit reached (${cap} runs); try again tomorrow`, kind: "rate_limit" });
+  }
   const res = await fetch(`https://api.github.com/repos/${env.GH_REPO}/actions/workflows/research.yml/dispatches`, {
     method: "POST",
     headers: {
@@ -47,5 +55,6 @@ export async function onRequestPost({ params, env, request }) {
   });
   if (!res.ok) return json({ status: "failed", error: `Could not start research (GitHub HTTP ${res.status})`, kind: "upstream" });
   await env.RESEARCH.put(`p-${sym}`, String(Date.now()), { expirationTtl: RUNNING_TTL });
+  await env.RESEARCH.put(`n-${day}`, String(used + 1), { expirationTtl: 3 * 24 * 3600 });
   return json({ status: "queued" });
 }
