@@ -12,6 +12,7 @@ import time
 from collections.abc import Callable
 from dataclasses import asdict, replace
 from datetime import date, timedelta
+from pathlib import Path
 from typing import Any, TypeVar
 
 import yfinance as yf
@@ -59,6 +60,7 @@ OVERVIEW_TTL = 15 * 60
 UNIVERSE_TTL = 24 * 3600
 OVERVIEW_DAYS = 22  # a month of trading days plus the day before
 NEWS_MOVERS = 5
+LIST_ROWS = 100
 NIFTY500 = "https://nsearchives.nseindia.com/content/indices/ind_nifty500list.csv"
 NIFTY50 = "https://nsearchives.nseindia.com/content/indices/ind_nifty50list.csv"
 ALL_LISTS = (
@@ -300,26 +302,45 @@ class LiveServices:
             factors.update(circuit_factors(files, bse_keys))
             files = [(dd, {k: b for k, b in bars.items() if k in universe}) for dd, bars in files]
             last_day, today = files[-1]
-            mv = movers(files, factors, universe)
+            # Lists carry 100 rows each so the site's filters still leave a full top 10.
+            mv = movers(files, factors, universe, n=LIST_ROWS)
             closes, _ = self._index_frames()
             week_movers = [
                 r
                 for r in mv["week"]["best"][:NEWS_MOVERS] + mv["week"]["worst"][:NEWS_MOVERS]
                 if not r["symbol"].startswith("BSE:")  # NSE announcements only
             ]
-            return {
+            result = {
                 "as_of": last_day,
                 "universe": "All listed companies: NSE main board, NSE SME and BSE-only",
                 "names": labels,
                 "meta": meta,
                 "sectors": sector_moves(closes, {s.label: s.index for s in SECTORS.values()}),
                 "movers": mv,
-                "trending": unusual_volume(files, factors),
-                "most_traded": most_traded(today, day=last_day, factors=factors),
+                "trending": unusual_volume(files, factors, n=LIST_ROWS),
+                "most_traded": most_traded(today, n=LIST_ROWS, day=last_day, factors=factors),
                 "news": self._week_news(week_movers, files[-WINDOWS["week"]][0], last_day),
             }
+            return with_valuations(result, self._scan_signals())
 
         return self._memo.get("overview", OVERVIEW_TTL, make)
+
+    def _scan_signals(self) -> dict[str, dict[str, Any]]:
+        """Valuation signal and red-flag status per stock from the latest scan (complete, or
+        the one in progress), so the site can filter every list by them."""
+        status = self.scanner.status()
+        scan = (
+            status.get("latest")
+            or status.get("partial")
+            or _read_json(self.ctx.data_dir / "scan" / "current.json")
+        )
+        out: dict[str, dict[str, Any]] = {}
+        for r in (scan or {}).get("rows", []):
+            out[r.get("key", r["symbol"])] = {
+                "signal": r.get("signal"),
+                "red": bool(r.get("red_flags")),
+            }
+        return out
 
     def _with_bse_only(
         self,
@@ -485,3 +506,33 @@ class LiveServices:
 
     def cached_research(self, symbol: str, model: str) -> dict[str, Any] | None:
         return self.ctx.research_store.load(symbol, model)
+
+
+def _read_json(path: Path) -> dict[str, Any] | None:
+    try:
+        return json.loads(path.read_text()) if path.exists() else None
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def with_valuations(overview: dict[str, Any], signals: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    """Add each listed stock's valuation signal and red-flag status (None = not scanned yet)."""
+
+    def tag(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return [
+            {
+                **r,
+                "signal": signals.get(r["symbol"], {}).get("signal"),
+                "red": signals.get(r["symbol"], {}).get("red", False),
+            }
+            for r in rows
+        ]
+
+    movers = {w: {k: tag(v) for k, v in sides.items()} for w, sides in overview["movers"].items()}
+    return {
+        **overview,
+        "movers": movers,
+        "trending": tag(overview["trending"]),
+        "most_traded": tag(overview["most_traded"]),
+        "news": tag(overview["news"]),
+    }

@@ -100,3 +100,18 @@ def test_liquidity_floor_is_ten_lakh() -> None:
     from eqr.scan import PICK_MIN_TURNOVER
 
     assert MIN_TURNOVER == 1e6 and PICK_MIN_TURNOVER == 1e6
+
+
+def test_with_valuations_tags_every_list() -> None:
+    from eqr.app.services import with_valuations
+
+    row = {"symbol": "TCS", "change": 0.1}
+    ov = {
+        "movers": {"day": {"best": [row], "worst": []}},
+        "trending": [row],
+        "most_traded": [],
+        "news": [{"symbol": "ZZZ", "change": 0.2}],
+    }
+    out = with_valuations(ov, {"TCS": {"signal": "Overvalued", "red": True}})
+    assert out["movers"]["day"]["best"][0]["signal"] == "Overvalued" and out["trending"][0]["red"]
+    assert out["news"][0]["signal"] is None and out["news"][0]["red"] is False

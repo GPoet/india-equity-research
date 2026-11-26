@@ -31,6 +31,13 @@ def write(path: Path, data: Any) -> None:
     path.write_text(json.dumps(clean(data), separators=(",", ":")))
 
 
+def slim(scan: dict[str, Any] | None) -> dict[str, Any] | None:
+    """The site filters the ranked list itself; the full row list and the picks are duplicates."""
+    if scan is None:
+        return None
+    return {k: v for k, v in scan.items() if k not in ("rows", "unranked", "picks")}
+
+
 def main() -> int:
     logging.basicConfig(level=logging.WARNING)
     ap = argparse.ArgumentParser()
@@ -110,8 +117,8 @@ def main() -> int:
         {
             "running": False,
             "progress": {},
-            "latest": latest,
-            "partial": None if latest else current,
+            "latest": slim(latest),
+            "partial": None if latest else slim(current),
         },
     )
     backtest = ROOT / "data" / "backtest" / "latest.json"

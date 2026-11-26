@@ -125,7 +125,7 @@ def parse_bse_bhavcopy(text: str) -> dict[str, DailyBar]:
 
 
 def parse_scrips(rows: list[dict[str, Any]]) -> dict[str, dict[str, str]]:
-    """Active equity scrips: code -> {ticker, name, isin, url}."""
+    """Active company scrips (no ETFs or fund units): code -> {ticker, name, isin, url}."""
     out = {}
     for r in rows:
         if (r.get("Segment") or "").strip() != "Equity" or (
@@ -133,7 +133,10 @@ def parse_scrips(rows: list[dict[str, Any]]) -> dict[str, dict[str, str]]:
         ).strip() != "Active":
             continue
         code = str(r.get("SCRIP_CD") or "").strip()
-        if code:
+        isin = (r.get("ISIN_NUMBER") or "").strip()
+        # Company shares have INE ISINs; ETFs and fund units (INF) sit in the same "Equity"
+        # segment and trading groups, so the ISIN is the only reliable way to leave them out.
+        if code and isin.startswith("INE"):
             out[code] = {
                 "ticker": (r.get("scrip_id") or code).strip(),
                 "name": (r.get("Scrip_Name") or r.get("Issuer_Name") or code).strip(),

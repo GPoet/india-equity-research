@@ -5,7 +5,10 @@ import { createContext, useContext, useEffect, useState } from "react";
 
 import { PeriodSwitch } from "@/components/PeriodSwitch";
 import { api, ApiError, type Mover, type Overview, type Period } from "@/lib/api";
+import { passes, type Filters } from "@/lib/filters";
 import { crore, pct, rupees, shares } from "@/lib/format";
+
+const SHOWN = 10;
 
 function longDate(iso: string): string {
   return new Date(`${iso.slice(0, 10)}T00:00:00`).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
@@ -122,16 +125,28 @@ function SectorBars({ rows }: { rows: Overview["sectors"][Period] }) {
   );
 }
 
-function MoversCard({ title, data, kind, names }: { title: string; data: Overview["movers"]; kind: "best" | "worst"; names: Record<string, string> }) {
+function MoversCard({
+  title,
+  data,
+  kind,
+  names,
+  filters,
+}: {
+  title: string;
+  data: Overview["movers"];
+  kind: "best" | "worst";
+  names: Record<string, string>;
+  filters: Filters;
+}) {
   const [period, setPeriod] = useState<Period>("day");
   return (
     <Card title={title} action={<PeriodSwitch value={period} onChange={setPeriod} label={`${title} period`} />}>
-      <MoverList rows={data[period][kind]} names={names} />
+      <MoverList rows={data[period][kind].filter((r) => passes(r, filters)).slice(0, SHOWN)} names={names} />
     </Card>
   );
 }
 
-export function MarketOverview() {
+export function MarketOverview({ filters }: { filters: Filters }) {
   const [data, setData] = useState<Overview | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [sectorPeriod, setSectorPeriod] = useState<Period>("day");
@@ -161,13 +176,13 @@ export function MarketOverview() {
         <Card title="Top sectors" action={<PeriodSwitch value={sectorPeriod} onChange={setSectorPeriod} label="Sector period" />}>
           <SectorBars rows={data.sectors[sectorPeriod]} />
         </Card>
-        <MoversCard title="Top stocks" data={data.movers} kind="best" names={n} />
-        <MoversCard title="Worst performers" data={data.movers} kind="worst" names={n} />
+        <MoversCard title="Top stocks" data={data.movers} kind="best" names={n} filters={filters} />
+        <MoversCard title="Worst performers" data={data.movers} kind="worst" names={n} filters={filters} />
 
         <Card title="Stocks of the day" note="Most traded by value on the last trading day.">
           <Heads cols={["Stock", "Price", "Volume", "Change"]} />
           <ol className="rows four">
-            {data.most_traded.map((t) => (
+            {data.most_traded.filter((r) => passes(r, filters)).slice(0, SHOWN).map((t) => (
               <li key={t.symbol}>
                 <Stock symbol={t.symbol} names={n} />
                 <span className="row-num">{rupees(t.close)}</span>
@@ -180,7 +195,7 @@ export function MarketOverview() {
         <Card title="Trending" note="Trading far above their usual volume: the last trading day against the 20 before it.">
           <Heads cols={["Stock", "Volume", "vs usual", "Change"]} />
           <ol className="rows four">
-            {data.trending.map((t) => (
+            {data.trending.filter((r) => passes(r, filters)).slice(0, SHOWN).map((t) => (
               <li key={t.symbol}>
                 <Stock symbol={t.symbol} names={n} />
                 <Volume volume={t.volume} turnover={t.turnover} />
@@ -195,7 +210,7 @@ export function MarketOverview() {
         <Card title="News moving the week" note="What the week's biggest movers filed with NSE.">
           {data.news.length === 0 && <p className="muted small">No filings from this week&apos;s biggest movers.</p>}
           <ul className="news">
-            {data.news.map((x) => (
+            {data.news.filter((r) => passes(r, filters)).map((x) => (
               <li key={x.symbol + x.when}>
                 <div className="news-head">
                   <Stock symbol={x.symbol} names={n} />

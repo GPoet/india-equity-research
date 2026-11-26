@@ -84,7 +84,9 @@ def unusual_volume(
                 "change": _change(b, factors, today_day),
                 "volume": b.volume,
                 "avg_volume": fmean(vols),
+                "close": b.close,
                 "turnover": b.turnover,
+                "series": b.series,
             }
         )
     return sorted(out, key=lambda x: x["ratio"], reverse=True)[:n]
@@ -127,6 +129,7 @@ def movers(
                 "change": r,
                 "close": files[-1][1][s].close,
                 "volume": files[-1][1][s].volume,
+                "series": files[-1][1][s].series,
                 "turnover": files[-1][1][s].turnover,
             }
             for s, r in rets.items()

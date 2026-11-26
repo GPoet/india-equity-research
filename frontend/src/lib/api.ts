@@ -189,7 +189,7 @@ export type Backtest = {
 };
 
 export type Period = "day" | "week" | "month";
-export type Mover = { symbol: string; change: number; close: number; volume: number; turnover: number };
+export type Mover = { symbol: string; change: number; close: number; volume: number; turnover: number; series?: string; signal?: string | null; red?: boolean };
 export type Overview = {
   as_of: string;
   universe: string;
@@ -197,9 +197,9 @@ export type Overview = {
   meta?: Record<string, { ticker: string; exchange: string; link: string | null }>;
   sectors: Record<Period, { sector: string; index: string; change: number }[]>;
   movers: Record<Period, { best: Mover[]; worst: Mover[] }>;
-  trending: { symbol: string; ratio: number; change: number | null; volume: number; avg_volume: number; turnover: number }[];
-  most_traded: { symbol: string; turnover: number; volume: number; close: number; change: number | null }[];
-  news: { symbol: string; change: number; category: string; text: string; when: string; url: string | null }[];
+  trending: { symbol: string; ratio: number; change: number | null; volume: number; avg_volume: number; turnover: number; close?: number; series?: string; signal?: string | null; red?: boolean }[];
+  most_traded: { symbol: string; turnover: number; volume: number; close: number; change: number | null; series?: string; signal?: string | null; red?: boolean }[];
+  news: { symbol: string; change: number; category: string; text: string; when: string; url: string | null; series?: string; signal?: string | null; red?: boolean }[];
 };
 
 export type ScanForecast = {

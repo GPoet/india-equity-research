@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 
 import { Volume } from "@/components/MarketOverview";
 import { api, ApiError, STATIC, type ScanRow, type ScanStatus } from "@/lib/api";
+import { passes, type Filters } from "@/lib/filters";
 import { pct, rupees } from "@/lib/format";
 
 const POLL_MS = 10000;
@@ -93,7 +94,11 @@ function ScanTable({ rows, showFlags }: { rows: ScanRow[]; showFlags: boolean })
 }
 
 // The daily scan of every listed company. Runs itself after each trading day; Refresh runs it now.
-export function DailyScan() {
+const PICKS = 20;
+const SHOW_ALL_CAP = 300; // a longer table than this is unreadable; filter further instead
+const MIN_TURNOVER = 1e6; // Rs 10 lakh a day: below this a price is set by a handful of trades
+
+export function DailyScan({ filters }: { filters: Filters }) {
   const [status, setStatus] = useState<ScanStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
@@ -131,6 +136,9 @@ export function DailyScan() {
   }
 
   const result = status?.latest ?? status?.partial ?? null;
+  // Every ranked stock that matches the filters (best odds first); picks are the top of it.
+  const matching = (result?.ranked ?? []).filter((r) => (r.turnover ?? 0) >= MIN_TURNOVER && passes(r, filters));
+  const picks = matching.slice(0, PICKS);
   const p = status?.progress;
   return (
     <section className="card scan">
@@ -145,9 +153,10 @@ export function DailyScan() {
       <p className="card-note">
         Every listed company that traded (NSE main board and SME, plus companies listed only on BSE) run through the valuation,
         quality checks, ownership and the Agents
-        Forecast, ranked by the odds of beating the Nifty over the next month. Picks leave out stocks with red flags and stocks that
-        traded under ₹10 lakh on the day; &ldquo;thin&rdquo; marks stocks under ₹1 crore, which are hard to trade in size. BSE-only companies do not get the promoter pledge check yet, and their filings refresh
-        weekly. Runs by itself each trading day after NSE publishes its end-of-day file (around 7 pm).
+        Forecast, ranked by the odds of beating the Nifty over the next month. The picks follow the filters above and leave out
+        stocks trading under ₹10 lakh a day; &ldquo;thin&rdquo; marks stocks under ₹1 crore, which are hard to trade in size. BSE-only
+        companies do not get the promoter pledge check yet. Runs by itself each trading day after the exchanges publish their
+        end-of-day files (around 7 pm).
       </p>
       {error && <p className="error">{error}</p>}
       {status?.running && p?.total ? (
@@ -165,10 +174,12 @@ export function DailyScan() {
             {result.complete ? "" : " so far"}
             {Object.keys(result.errors).length > 0 && `, ${Object.keys(result.errors).length} could not be valued`}.
           </p>
-          <ScanTable rows={showAll ? result.ranked : result.picks} showFlags={showAll} />
+          <ScanTable rows={showAll ? matching.slice(0, SHOW_ALL_CAP) : picks} showFlags={showAll} />
           <p className="small" style={{ marginTop: "0.75rem" }}>
             <button className="link" onClick={() => setShowAll((v) => !v)}>
-              {showAll ? "Show the picks only" : `Show all ${result.ranked.length} ranked stocks, red flags included`}
+              {showAll
+                ? "Show the top picks only"
+                : `Show all ${matching.length} stocks that match the filters${matching.length > SHOW_ALL_CAP ? ` (first ${SHOW_ALL_CAP})` : ""}`}
             </button>
           </p>
           <p className="small muted" style={{ marginTop: "0.5rem" }}>
