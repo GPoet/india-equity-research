@@ -1,0 +1,19 @@
+name: keepalive
+# GitHub disables scheduled workflows in public repos after 60 days without a commit; the daily
+# scan would stop silently. One empty commit a month resets that clock.
+on:
+  schedule:
+    - cron: "0 3 1 * *" # 08:30 IST on the 1st of each month
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  keepalive:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit --allow-empty -m "chore: keep scheduled scans enabled"
+          git push
