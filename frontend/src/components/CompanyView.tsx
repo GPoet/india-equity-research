@@ -11,7 +11,7 @@ import { ResearchPanel } from "@/components/ResearchPanel";
 import { SectorPanel } from "@/components/SectorPanel";
 import { SentimentPanel } from "@/components/SentimentPanel";
 import { ScaleKey, ValueScale } from "@/components/ValueScale";
-import { api, ApiError, type Company } from "@/lib/api";
+import { api, STATIC, ApiError, type Company } from "@/lib/api";
 import { crore, num, pct, rupees } from "@/lib/format";
 
 function signalClass(signal: string): string {
@@ -58,7 +58,8 @@ export function CompanyView({ symbol }: { symbol: string }) {
       <p className="small muted">
         Market cap {crore(a.market_cap)}
         {a.eps_ttm && a.eps_ttm > 0 ? `, P/E ${num(v.price / a.eps_ttm, 1)}` : ""}. Price as of{" "}
-        {v.price_as_of.slice(0, 16).replace("T", " ")} (Yahoo, about 15 minutes delayed).
+        {v.price_as_of.slice(0, 16).replace("T", " ")}{" "}
+        {STATIC ? "(NSE or BSE closing price; the site updates each trading evening)." : "(Yahoo, about 15 minutes delayed)."}
       </p>
 
       <div className="verdict">
