@@ -17,8 +17,12 @@ def call(method: str, key: str, body: bytes | None = None) -> None:
         f"https://api.cloudflare.com/client/v4/accounts/{os.environ['CLOUDFLARE_ACCOUNT_ID']}"
         f"/storage/kv/namespaces/{os.environ['RESEARCH_KV_ID']}/values/{urllib.parse.quote(key, safe='')}"
     )
-    req = urllib.request.Request(base, data=body, method=method,
-                                 headers={"Authorization": f"Bearer {os.environ['CLOUDFLARE_API_TOKEN']}"})
+    req = urllib.request.Request(
+        base,
+        data=body,
+        method=method,
+        headers={"Authorization": f"Bearer {os.environ['CLOUDFLARE_API_TOKEN']}"},
+    )
     with urllib.request.urlopen(req, timeout=30) as resp:
         resp.read()
 

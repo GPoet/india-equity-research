@@ -31,7 +31,11 @@ def main() -> int:
     except LlmError as exc:
         result = {"status": "failed", "error": str(exc), "kind": exc.kind}
     except Exception as exc:  # noqa: BLE001 - report, never leave the page waiting forever
-        result = {"status": "failed", "error": f"Research failed: {type(exc).__name__}", "kind": "internal"}
+        result = {
+            "status": "failed",
+            "error": f"Research failed: {type(exc).__name__}",
+            "kind": "internal",
+        }
     Path(args.out).write_text(json.dumps(clean(result)))
     print(result["status"], result.get("error", ""))
     return 0

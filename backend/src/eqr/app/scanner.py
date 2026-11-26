@@ -20,6 +20,7 @@ from eqr.app.serialize import clean
 from eqr.forecast.model import ForecastModel
 from eqr.pipeline import Context
 from eqr.scan import order_universe, rank, scan_symbol, should_run, symbols_with_new_results
+from eqr.shards import in_shard
 from eqr.sources.announcements import fetch_market_announcements
 from eqr.sources.bhavcopy import BhavcopySource
 from eqr.sources.bse import BseFilingsSource, BseSource, bse_client
@@ -67,6 +68,7 @@ class Scanner:
         self._progress: dict[str, Any] = {}
         self._stop = threading.Event()
         self.deadline: float | None = None  # epoch seconds: save and stop cleanly past this
+        self.shard: tuple[int, int] | None = None  # (index, count): scan only this slice
 
     # ---- reading -------------------------------------------------------------
     def latest(self) -> dict[str, Any] | None:
@@ -114,9 +116,11 @@ class Scanner:
             got = BhavcopySource(self._ctx.client, self._ctx.cache).latest(date.today())
         return next(iter(got.values())).trade_date if got else None
 
-    def run_now(self, deadline: float | None = None) -> dict[str, Any]:
+    def run_now(
+        self, deadline: float | None = None, shard: tuple[int, int] | None = None
+    ) -> dict[str, Any]:
         """Run (or resume) a scan in this thread; for scheduled jobs outside the API."""
-        self.deadline = deadline
+        self.deadline, self.shard = deadline, shard
         with self._lock:
             self._running = True
         try:
@@ -168,6 +172,10 @@ class Scanner:
             day, nse_isins | {b.isin for b in bars.values()}, nifty, market, model
         )
 
+        if self.shard:  # parallel jobs: this one takes only its slice of the companies
+            nse_jobs = [j for j in nse_jobs if in_shard(j[0], self.shard)]
+            bse_jobs = [j for j in bse_jobs if in_shard(j[0], self.shard)]
+        my_keys = {k for k, _ in nse_jobs} | {k for k, _ in bse_jobs}
         current = _read(self._dir / "current.json")
         rows: dict[str, dict[str, Any]] = (
             {r.get("key", r["symbol"]): r for r in current["rows"]}
@@ -221,7 +229,9 @@ class Scanner:
             t.start()
         for t in threads:
             t.join()
-        if self._stop.is_set() or len(rows) + len(errors) < total:
+        # Done when every company of this run (this slice, when sharded) has a row or an error;
+        # resumed rows from other slices do not count.
+        if self._stop.is_set() or any(k not in rows and k not in errors for k in my_keys):
             # stopped early (shutdown or deadline): keep what is done; the next run resumes
             _write(
                 self._dir / "current.json", self._result(day, rows, errors, total, complete=False)

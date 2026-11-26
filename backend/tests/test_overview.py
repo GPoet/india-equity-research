@@ -86,9 +86,9 @@ def test_circuit_factors_neutralise_impossible_bse_moves() -> None:
 
     ds = days(3)
     files = [
-        (ds[0], {"BSE:1": bar("BSE:1", ds[0], 110, 100)}),   # +10%: a real move
-        (ds[1], {"BSE:1": bar("BSE:1", ds[1], 22, 110)}),    # -80%: beyond any circuit = split
-        (ds[2], {"BSE:1": bar("BSE:1", ds[2], 24.2, 22)}),   # +10%
+        (ds[0], {"BSE:1": bar("BSE:1", ds[0], 110, 100)}),  # +10%: a real move
+        (ds[1], {"BSE:1": bar("BSE:1", ds[1], 22, 110)}),  # -80%: beyond any circuit = split
+        (ds[2], {"BSE:1": bar("BSE:1", ds[2], 24.2, 22)}),  # +10%
     ]
     f = circuit_factors(files, {"BSE:1"})
     assert f == {("BSE:1", ds[1]): pytest.approx(5.0)}

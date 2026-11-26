@@ -22,7 +22,9 @@ def target() -> tuple[str, str]:
     if not (account and project) and saved.exists():
         account, project = saved.read_text().split()[:2]
     if not (account and project):
-        raise SystemExit("Set CLOUDFLARE_ACCOUNT_ID and CF_PAGES_PROJECT, or write them to ~/.equity-desk-pages")
+        raise SystemExit(
+            "Set CLOUDFLARE_ACCOUNT_ID and CF_PAGES_PROJECT, or write them to ~/.equity-desk-pages"
+        )
     return account, project
 
 
@@ -31,17 +33,23 @@ def main() -> int:
     if not name.isidentifier():
         print("Usage: set_pages_secret.py NAME")
         return 2
-    token = os.environ.get("CLOUDFLARE_API_TOKEN") or Path.home().joinpath(".cloudflare-token").read_text().strip()
+    token = (
+        os.environ.get("CLOUDFLARE_API_TOKEN")
+        or Path.home().joinpath(".cloudflare-token").read_text().strip()
+    )
     value = os.environ.get("SECRET_VALUE") or getpass.getpass(f"{name} (input hidden): ").strip()
     if not value:
         print("Nothing entered; unchanged.")
         return 1
     account, project = target()
     env = {name: {"type": "secret_text", "value": value}}
-    body = json.dumps({"deployment_configs": {"production": {"env_vars": env}, "preview": {"env_vars": env}}}).encode()
+    body = json.dumps(
+        {"deployment_configs": {"production": {"env_vars": env}, "preview": {"env_vars": env}}}
+    ).encode()
     req = urllib.request.Request(
         f"https://api.cloudflare.com/client/v4/accounts/{account}/pages/projects/{project}",
-        data=body, method="PATCH",
+        data=body,
+        method="PATCH",
         headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
     )
     with urllib.request.urlopen(req, timeout=30) as resp:
