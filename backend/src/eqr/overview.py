@@ -15,7 +15,12 @@ import pandas as pd
 from eqr.sources.bhavcopy import DailyBar
 
 WINDOWS = {"day": 1, "week": 5, "month": 21}
-MIN_TURNOVER = 1e8  # Rs 10 crore a day on average: below this, moves are mostly noise
+# Rs 10 lakh a day on average: keeps small, little-known companies in, and drops only stocks so
+# thin that one small order sets the price. The site tags stocks under Rs 1 crore as "thin".
+MIN_TURNOVER = 1e6
+# No listed stock may move more than 20% in a day (exchange circuit limits), so a bigger jump on
+# a BSE-only stock is a split or bonus. BSE has no market-wide list of those, unlike NSE.
+CIRCUIT_LIMIT = 0.20
 VOLUME_DAYS = 20
 
 DayFiles = list[tuple[date, dict[str, DailyBar]]]  # oldest first
@@ -160,3 +165,19 @@ def headline(text: str) -> str:
     on ...' -> 'Outcome of Board Meeting held on ...'."""
     out = _BOILERPLATE.sub("", text.strip(), count=1).strip()
     return (out[:1].upper() + out[1:]) if out else text.strip()
+
+
+def circuit_factors(files: DayFiles, keys: set[str]) -> dict[tuple[str, date], float]:
+    """Share factors for days whose move is beyond any circuit limit (splits, bonuses), so the
+    chained return skips them. For BSE-only stocks, whose corporate actions are not listed
+    market-wide."""
+    out: dict[tuple[str, date], float] = {}
+    for d, bars in files:
+        for key in keys:
+            b = bars.get(key)
+            if b is None or not b.prev_close or not b.close:
+                continue
+            move = b.close / b.prev_close
+            if not (1 - CIRCUIT_LIMIT - 0.005) <= move <= (1 + CIRCUIT_LIMIT + 0.005):
+                out[(key, d)] = b.prev_close / b.close
+    return out

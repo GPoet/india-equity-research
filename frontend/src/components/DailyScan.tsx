@@ -92,7 +92,7 @@ function ScanTable({ rows, showFlags }: { rows: ScanRow[]; showFlags: boolean })
   );
 }
 
-// The daily scan of the Nifty 500. Runs itself after each NSE trading day; Refresh runs it now.
+// The daily scan of every listed company. Runs itself after each trading day; Refresh runs it now.
 export function DailyScan() {
   const [status, setStatus] = useState<ScanStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -146,7 +146,7 @@ export function DailyScan() {
         Every listed company that traded (NSE main board and SME, plus companies listed only on BSE) run through the valuation,
         quality checks, ownership and the Agents
         Forecast, ranked by the odds of beating the Nifty over the next month. Picks leave out stocks with red flags and stocks that
-        traded under ₹1 crore on the day. BSE-only companies do not get the promoter pledge check yet, and their filings refresh
+        traded under ₹10 lakh on the day; &ldquo;thin&rdquo; marks stocks under ₹1 crore, which are hard to trade in size. BSE-only companies do not get the promoter pledge check yet, and their filings refresh
         weekly. Runs by itself each trading day after NSE publishes its end-of-day file (around 7 pm).
       </p>
       {error && <p className="error">{error}</p>}

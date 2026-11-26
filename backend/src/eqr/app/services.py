@@ -10,7 +10,7 @@ import logging
 import threading
 import time
 from collections.abc import Callable
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from datetime import date, timedelta
 from typing import Any, TypeVar
 
@@ -27,6 +27,7 @@ from eqr.nse_client import NseError
 from eqr.overview import (
     WINDOWS,
     DayFiles,
+    circuit_factors,
     headline,
     most_traded,
     movers,
@@ -41,6 +42,7 @@ from eqr.sentiment.agent import run_sentiment
 from eqr.settings import load_env
 from eqr.sources.announcements import fetch_announcements
 from eqr.sources.bhavcopy import BhavcopySource
+from eqr.sources.bse import BseSource, bse_client
 from eqr.sources.corporate_actions import fetch_share_factors
 from eqr.sources.prices import history
 from eqr.valuation import ENGINE_VERSION
@@ -276,7 +278,7 @@ class LiveServices:
 
     def overview(self) -> dict[str, Any]:
         def make() -> dict[str, Any]:
-            universe = self._nifty500()
+            names, nse_isins = self._all_names()
             bhav = BhavcopySource(self.ctx.client, self.ctx.cache)
             files: DayFiles = []
             d = date.today()
@@ -288,26 +290,68 @@ class LiveServices:
                 raise NseError("Not enough NSE daily files to build the market overview")
             files.reverse()
             factors = fetch_share_factors(self.ctx.client, files[0][0], files[-1][0])
+            # Every NSE company (main board and SME; ETFs are not on NSE's company lists) ...
+            universe = set(names) if names else {s for _, bars in files for s in bars}
+            labels: dict[str, str] = dict(names)
+            meta: dict[str, dict[str, Any]] = {}
+            # ... plus companies listed only on BSE, keyed "BSE:<code>".
+            files, bse_keys = self._with_bse_only(files, nse_isins, labels, meta)
+            universe |= bse_keys
+            factors.update(circuit_factors(files, bse_keys))
+            files = [(dd, {k: b for k, b in bars.items() if k in universe}) for dd, bars in files]
             last_day, today = files[-1]
-            liquid = {s: b for s, b in today.items() if s in universe}
-            mv = movers(files, factors, set(universe))
+            mv = movers(files, factors, universe)
             closes, _ = self._index_frames()
-            week_movers = mv["week"]["best"][:NEWS_MOVERS] + mv["week"]["worst"][:NEWS_MOVERS]
+            week_movers = [
+                r
+                for r in mv["week"]["best"][:NEWS_MOVERS] + mv["week"]["worst"][:NEWS_MOVERS]
+                if not r["symbol"].startswith("BSE:")  # NSE announcements only
+            ]
             return {
                 "as_of": last_day,
-                "universe": "Nifty 500",
-                "names": {s: v["name"] for s, v in universe.items()},
+                "universe": "All listed companies: NSE main board, NSE SME and BSE-only",
+                "names": labels,
+                "meta": meta,
                 "sectors": sector_moves(closes, {s.label: s.index for s in SECTORS.values()}),
                 "movers": mv,
-                "trending": unusual_volume(
-                    [(dd, {s: b for s, b in bars.items() if s in universe}) for dd, bars in files],
-                    factors,
-                ),
-                "most_traded": most_traded(liquid, day=last_day, factors=factors),
+                "trending": unusual_volume(files, factors),
+                "most_traded": most_traded(today, day=last_day, factors=factors),
                 "news": self._week_news(week_movers, files[-WINDOWS["week"]][0], last_day),
             }
 
         return self._memo.get("overview", OVERVIEW_TTL, make)
+
+    def _with_bse_only(
+        self,
+        files: DayFiles,
+        nse_isins: set[str],
+        labels: dict[str, str],
+        meta: dict[str, dict[str, Any]],
+    ) -> tuple[DayFiles, set[str]]:
+        """Add BSE's daily files for companies not listed on NSE. BSE down = NSE only."""
+        try:
+            source = BseSource(bse_client(self.ctx.cache), self.ctx.cache)
+            scrips = source.scrips()
+        except Exception as exc:  # noqa: BLE001 - the overview must still show NSE
+            log.warning("BSE unavailable for the overview: %s", exc)
+            return files, set()
+        isins = nse_isins | {b.isin for _, bars in files for b in bars.values()}
+        only = {c: info for c, info in scrips.items() if info["isin"] and info["isin"] not in isins}
+        keys: set[str] = set()
+        merged: DayFiles = []
+        for d, bars in files:
+            extra = {}
+            for code, b in (source.bars(d) or {}).items():
+                if code in only:
+                    key = f"BSE:{code}"
+                    extra[key] = replace(b, symbol=key)
+                    keys.add(key)
+            merged.append((d, {**bars, **extra}))
+        for key in keys:
+            info = only[key[4:]]
+            labels[key] = info["name"]
+            meta[key] = {"ticker": info["ticker"], "exchange": "BSE", "link": info["url"] or None}
+        return merged, keys
 
     def _week_news(
         self, rows: list[dict[str, Any]], start: date, end: date

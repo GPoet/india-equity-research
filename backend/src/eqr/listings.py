@@ -5,10 +5,14 @@ from __future__ import annotations
 import csv
 import io
 import logging
+import re
 
 from eqr.nse_client import NseClient, NseError
 
 log = logging.getLogger(__name__)
+
+# Rights entitlements ("IEML-RE1") trade for a few weeks during a rights issue; not companies.
+RIGHTS = re.compile(r"-RE\d*$")
 
 NIFTY50 = "https://nsearchives.nseindia.com/content/indices/ind_nifty50list.csv"
 ALL_LISTS = (
@@ -34,7 +38,7 @@ def all_names(client: NseClient) -> tuple[dict[str, str], set[str]]:
             continue
         for r in csv.DictReader(io.StringIO(text)):
             r = {k.strip(): (v or "").strip() for k, v in r.items() if k}
-            if r.get(sym_col):
+            if r.get(sym_col) and not RIGHTS.search(r[sym_col]):
                 out[r[sym_col]] = r.get(name_col) or r[sym_col]
             isin = r.get("ISIN NUMBER") or r.get("ISIN_NUMBER")
             if isin:

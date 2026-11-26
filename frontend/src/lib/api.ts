@@ -194,6 +194,7 @@ export type Overview = {
   as_of: string;
   universe: string;
   names: Record<string, string>;
+  meta?: Record<string, { ticker: string; exchange: string; link: string | null }>;
   sectors: Record<Period, { sector: string; index: string; change: number }[]>;
   movers: Record<Period, { best: Mover[]; worst: Mover[] }>;
   trending: { symbol: string; ratio: number; change: number | null; volume: number; avg_volume: number; turnover: number }[];

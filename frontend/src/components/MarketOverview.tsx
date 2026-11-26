@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { createContext, useContext, useEffect, useState } from "react";
 
 import { PeriodSwitch } from "@/components/PeriodSwitch";
 import { api, ApiError, type Mover, type Overview, type Period } from "@/lib/api";
@@ -17,7 +17,29 @@ function Change({ x }: { x: number | null }) {
   return <span className={x > 0 ? "up" : "down"}>{pct(x, true)}</span>;
 }
 
+// BSE-only companies ("BSE:<code>"): their ticker and BSE page, from the overview payload.
+const MetaContext = createContext<NonNullable<Overview["meta"]>>({});
+
+export const THIN_TURNOVER = 1e7; // under Rs 1 crore a day: hard to buy or sell in size
+
 function Stock({ symbol, names }: { symbol: string; names: Record<string, string> }) {
+  const meta = useContext(MetaContext)[symbol];
+  if (symbol.startsWith("BSE:")) {
+    const label = meta?.ticker ?? symbol.slice(4);
+    return (
+      <span className="stock">
+        <span>
+          {meta?.link ? (
+            <a href={meta.link} target="_blank" rel="noreferrer noopener">{label}</a>
+          ) : (
+            <strong>{label}</strong>
+          )}{" "}
+          <span className="tag plain" title="Listed only on BSE">BSE</span>
+        </span>
+        <span className="stock-name">{names[symbol] ?? ""}</span>
+      </span>
+    );
+  }
   return (
     <span className="stock">
       <Link href={`/company/${encodeURIComponent(symbol)}`}>{symbol}</Link>
@@ -43,7 +65,12 @@ export function Volume({ volume, turnover }: { volume: number; turnover: number 
   return (
     <span className="row-num vol">
       {shares(volume)}
-      <span className="vol-value">{crore(turnover)}</span>
+      <span className="vol-value">
+        {crore(turnover)}
+        {turnover < THIN_TURNOVER && (
+          <span className="thin" title="Under ₹1 crore traded: hard to buy or sell in size"> thin</span>
+        )}
+      </span>
     </span>
   );
 }
@@ -124,9 +151,10 @@ export function MarketOverview() {
   if (!data) return <p className="muted">Loading the market… the first load of the day reads a month of NSE files and takes about a minute.</p>;
   const n = data.names;
   return (
-    <>
+    <MetaContext.Provider value={data.meta ?? {}}>
       <p className="market-asof">
-        Last trading day {longDate(data.as_of)}. {data.universe} stocks trading at least ₹10 crore a day, from NSE&apos;s end-of-day files. Search
+        Last trading day {longDate(data.as_of)}. {data.universe}, trading at least ₹10 lakh a day, from the exchanges&apos; end-of-day files.
+        &ldquo;Thin&rdquo; marks stocks under ₹1 crore a day. Search
         any company above.
       </p>
       <div className="grid">
@@ -182,6 +210,6 @@ export function MarketOverview() {
           </ul>
         </Card>
       </div>
-    </>
+    </MetaContext.Provider>
   );
 }

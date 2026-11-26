@@ -45,7 +45,7 @@ def order_universe(symbols: list[str], nifty50: set[str], turnover: dict[str, fl
     return sorted(symbols, key=lambda s: (s not in nifty50, -turnover.get(s, 0.0)))
 
 
-PICK_MIN_TURNOVER = 1e7  # Rs 1 crore traded on the day: below this a stock cannot really be bought
+PICK_MIN_TURNOVER = 1e6  # Rs 10 lakh traded on the day; under Rs 1 crore the site tags it "thin"
 RESULT_CATEGORIES = frozenset(
     {"Financial Result Updates", "Outcome of Board Meeting", "Integrated Filing- Financials"}
 )

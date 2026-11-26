@@ -79,3 +79,24 @@ def test_headline_strips_exchange_boilerplate() -> None:
     t = "Maruti Suzuki India Limited has informed the Exchange about Price increase"
     assert headline(t) == "Price increase"
     assert headline("Board approved a buyback") == "Board approved a buyback"
+
+
+def test_circuit_factors_neutralise_impossible_bse_moves() -> None:
+    from eqr.overview import circuit_factors, window_returns
+
+    ds = days(3)
+    files = [
+        (ds[0], {"BSE:1": bar("BSE:1", ds[0], 110, 100)}),   # +10%: a real move
+        (ds[1], {"BSE:1": bar("BSE:1", ds[1], 22, 110)}),    # -80%: beyond any circuit = split
+        (ds[2], {"BSE:1": bar("BSE:1", ds[2], 24.2, 22)}),   # +10%
+    ]
+    f = circuit_factors(files, {"BSE:1"})
+    assert f == {("BSE:1", ds[1]): pytest.approx(5.0)}
+    assert window_returns(files, f, 3)["BSE:1"] == pytest.approx(1.1 * 1.1 - 1)
+
+
+def test_liquidity_floor_is_ten_lakh() -> None:
+    from eqr.overview import MIN_TURNOVER
+    from eqr.scan import PICK_MIN_TURNOVER
+
+    assert MIN_TURNOVER == 1e6 and PICK_MIN_TURNOVER == 1e6

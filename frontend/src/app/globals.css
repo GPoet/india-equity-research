@@ -283,6 +283,11 @@ p {
   line-height: 1.25;
 }
 
+.thin {
+  color: var(--neutral);
+  font-weight: 600;
+}
+
 .vol-value {
   color: var(--muted);
   font-size: 0.75rem;

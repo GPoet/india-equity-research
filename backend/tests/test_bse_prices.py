@@ -1,6 +1,5 @@
 from datetime import date
 
-import pandas as pd
 import pytest
 
 from eqr.sources.bse_prices import adjust, parse_actions, parse_price_csv, share_factor

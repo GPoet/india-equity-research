@@ -38,3 +38,10 @@ def test_cache_delete(tmp_path) -> None:
     c.set("k", "v", ttl=None)
     c.delete("k")
     assert c.get("k") is None
+
+
+def test_rights_entitlements_are_not_companies() -> None:
+    from eqr.listings import RIGHTS
+
+    assert RIGHTS.search("IEML-RE1") and RIGHTS.search("ABC-RE")
+    assert not RIGHTS.search("RELIANCE") and not RIGHTS.search("NRE")
