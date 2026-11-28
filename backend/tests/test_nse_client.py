@@ -147,3 +147,34 @@ def test_background_requests_yield_to_waiting_foreground() -> None:
         c._fg_cond.notify_all()
     t.join(2)
     assert done.is_set()
+
+
+def test_warm_retries_a_refused_address_then_succeeds() -> None:
+    from eqr.nse_client import NseClient
+
+    statuses = iter([403, 403, 200, 200])
+
+    class Resp:
+        def __init__(self, code):
+            self.status_code, self.text, self.content = code, "ok", b"ok"
+
+    class Session:
+        def get(self, url, **kw):
+            return Resp(next(statuses))
+
+    c = NseClient(min_interval=0, backoff=0, session_factory=Session)
+    assert c._fetch("https://x/data").status_code == 200
+
+
+def test_warm_gives_up_after_repeated_refusals() -> None:
+    import pytest
+
+    from eqr.nse_client import NseClient, NseError
+
+    class Session:
+        def get(self, url, **kw):
+            return type("R", (), {"status_code": 403, "text": "", "content": b""})()
+
+    c = NseClient(min_interval=0, backoff=0, session_factory=Session)
+    with pytest.raises(NseError):
+        c._fetch("https://x/data")

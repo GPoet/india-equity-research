@@ -103,6 +103,15 @@ def test_parse_scrips_equity_active() -> None:
 
 
 def test_parse_scrips_drops_etfs() -> None:
-    rows = [{"SCRIP_CD": "538683", "Scrip_Name": "Nippon India ETF Sensex", "Status": "Active",
-             "ISIN_NUMBER": "INF204KB15I9", "scrip_id": "SENSEXBEES", "Segment": "Equity", "NSURL": ""}]
+    rows = [
+        {
+            "SCRIP_CD": "538683",
+            "Scrip_Name": "Nippon India ETF Sensex",
+            "Status": "Active",
+            "ISIN_NUMBER": "INF204KB15I9",
+            "scrip_id": "SENSEXBEES",
+            "Segment": "Equity",
+            "NSURL": "",
+        }
+    ]
     assert parse_scrips(rows) == {}

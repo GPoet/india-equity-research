@@ -30,6 +30,8 @@ RETRY_STATUS = {429, 500, 502, 503, 504}
 
 
 _thread = threading.local()
+WARM_ATTEMPTS = 4
+WARM_RETRY_SECONDS = 20  # x backoff x attempt: 20s, 40s, 60s
 
 
 class NseError(RuntimeError):
@@ -98,12 +100,22 @@ class NseClient:
             raise NseError(f"Network error for {url}: {type(exc).__name__}: {exc}") from exc
 
     def _warm(self) -> None:
+        """Open a session via the home page. Bot protection sometimes refuses one address for a
+        few minutes (HTTP 403 on cloud runners); wait and retry before giving up."""
         self._session = None
-        session = self._session_factory()
-        resp = self._get(session, self._base + "/")
-        if resp.status_code != 200:
-            raise NseError(f"NSE home page returned HTTP {resp.status_code}")
-        self._session = session  # only keep a session that warmed up successfully
+        status = None
+        for attempt in range(WARM_ATTEMPTS):
+            if attempt:
+                time.sleep(self._backoff * WARM_RETRY_SECONDS * attempt)
+            session = self._session_factory()
+            resp = self._get(session, self._base + "/")
+            status = resp.status_code
+            if status == 200:
+                self._session = session  # only keep a session that warmed up successfully
+                return
+            if status not in (403, 429, 503):
+                break
+        raise NseError(f"NSE home page returned HTTP {status}")
 
     def _fetch(self, url: str) -> Any:
         if getattr(_thread, "background", False):

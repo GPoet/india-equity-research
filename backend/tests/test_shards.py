@@ -81,3 +81,13 @@ def test_merge_incomplete_keeps_latest_untouched(tmp_path: Path) -> None:
     result = merge(base, [d])
     assert not result["complete"]
     assert json.loads((base / "scan" / "latest.json").read_text())["price_day"] == "2026-11-24"
+
+
+def test_a_failed_slice_keeps_the_scan_incomplete(tmp_path: Path) -> None:
+    base = tmp_path / "base"
+    (base / "scan").mkdir(parents=True)
+    d = tmp_path / "d0"
+    scan(d, "2026-11-25", ["A"], total=1, complete=True)
+    result = merge(base, [d], missing=1)  # the other slice's job failed and uploaded nothing
+    assert not result["complete"]
+    assert not (base / "scan" / "latest.json").exists()

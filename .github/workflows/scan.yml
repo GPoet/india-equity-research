@@ -82,7 +82,7 @@ jobs:
         run: uv sync --frozen
       - name: Merge slices
         working-directory: backend
-        run: uv run python scripts/merge_shards.py "$RUNNER_TEMP"/deltas/*
+        run: uv run python scripts/merge_shards.py --expect 8 "$RUNNER_TEMP"/deltas/*
       - name: Save shared scan data
         uses: actions/cache/save@v4
         with:

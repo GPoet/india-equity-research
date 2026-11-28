@@ -99,17 +99,28 @@ def main() -> int:
     write(out / "index.json", index)
 
     svc = LiveServices()
-    closes, pe = svc._index_frames()  # noqa: SLF001 - same frames the live API uses
-    write(out / "sectors.json", svc.sectors())
-    for key in SECTORS:
-        write(
-            out / "sector" / f"{key}.json",
-            {"sector_key": key, "picture": sector_picture(key, closes, pe)},
+    try:
+        closes, pe = svc._index_frames()  # noqa: SLF001 - same frames the live API uses
+    except ValueError as exc:  # NSE refused this machine: publish everything else
+        print(f"Sector data unavailable, sector cards left empty: {exc}")
+        closes = pe = None
+    if closes is not None:
+        write(out / "sectors.json", svc.sectors())
+    else:
+        write(out / "sectors.json", {"as_of": None, "sectors": []})
+    for key in [*SECTORS, None]:
+        picture = (
+            sector_picture(key, closes, pe)
+            if closes is not None
+            else {
+                "as_of": None,
+                "sector": None,
+                "related": [],
+                "strongest": [],
+                "notes": ["Sector data was unavailable at the last update"],
+            }
         )
-    write(
-        out / "sector" / "none.json",
-        {"sector_key": None, "picture": sector_picture(None, closes, pe)},
-    )
+        write(out / "sector" / f"{key or 'none'}.json", {"sector_key": key, "picture": picture})
     write(out / "overview.json", svc.overview())
     shown = latest or current
     write(

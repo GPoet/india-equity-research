@@ -54,8 +54,9 @@ def export_delta(data_dir: Path, out: Path, since: float) -> None:
             shutil.copy2(src, out / name)
 
 
-def merge(data_dir: Path, deltas: list[Path]) -> dict[str, Any]:
-    """Fold slices into data_dir. Returns the combined scan result."""
+def merge(data_dir: Path, deltas: list[Path], missing: int = 0) -> dict[str, Any]:
+    """Fold slices into data_dir. Returns the combined scan result. `missing` counts slices
+    that produced nothing (their job failed): the scan cannot be complete while any are."""
     cache = data_dir / "cache.sqlite"
     with sqlite3.connect(cache) as conn:
         conn.execute(
@@ -92,7 +93,9 @@ def merge(data_dir: Path, deltas: list[Path]) -> dict[str, Any]:
         for r in p.get("rows", []):
             rows[r.get("key", r["symbol"])] = r
         errors.update(p.get("errors", {}))
-    complete = len(same_day) == len(deltas) and all(p.get("complete") for p in same_day)
+    complete = (
+        missing == 0 and len(same_day) == len(deltas) and all(p.get("complete") for p in same_day)
+    )
     picks, ranked = rank(list(rows.values()))
     result = {
         **same_day[0],

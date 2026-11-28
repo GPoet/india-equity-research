@@ -304,7 +304,13 @@ class LiveServices:
             last_day, today = files[-1]
             # Lists carry 100 rows each so the site's filters still leave a full top 10.
             mv = movers(files, factors, universe, n=LIST_ROWS)
-            closes, _ = self._index_frames()
+            try:
+                sectors = sector_moves(
+                    self._index_frames()[0], {s.label: s.index for s in SECTORS.values()}
+                )
+            except ValueError as exc:  # NSE index files unavailable: lists still work
+                log.warning("Sector moves unavailable: %s", exc)
+                sectors = {w: [] for w in WINDOWS}
             week_movers = [
                 r
                 for r in mv["week"]["best"][:NEWS_MOVERS] + mv["week"]["worst"][:NEWS_MOVERS]
@@ -315,7 +321,7 @@ class LiveServices:
                 "universe": "All listed companies: NSE main board, NSE SME and BSE-only",
                 "names": labels,
                 "meta": meta,
-                "sectors": sector_moves(closes, {s.label: s.index for s in SECTORS.values()}),
+                "sectors": sectors,
                 "movers": mv,
                 "trending": unusual_volume(files, factors, n=LIST_ROWS),
                 "most_traded": most_traded(today, n=LIST_ROWS, day=last_day, factors=factors),
